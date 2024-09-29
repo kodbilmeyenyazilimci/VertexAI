@@ -40,24 +40,19 @@ class MainViewModel(private val llamaAndroid: LLamaAndroid = LLamaAndroid.instan
         val text = message
         message = ""
 
-        // Mesajı modelin işleme sürecine ekleyelim
-        messages += "Sen: $text"
+        // Add to messages console.
+        messages += text
         messages += ""
 
         viewModelScope.launch {
             llamaAndroid.send(text)
-                .catch { e ->
-                    Log.e(tag, "send() failed", e)
-                    messages += "Hata: ${e.message}"
+                .catch {
+                    Log.e(tag, "send() failed", it)
+                    messages += it.message!!
                 }
-                .collect { response ->
-                    // Yanıtı yakalayıp loglayın
-                    Log.d(tag, "Modelin yanıtı: $response")
-                    messages = messages.dropLast(1) + "Model: $response"
-                }
+                .collect { messages = messages.dropLast(1) + (messages.last() + it) }
         }
     }
-
 
     fun bench(pp: Int, tg: Int, pl: Int, nr: Int = 1) {
         viewModelScope.launch {

@@ -10,45 +10,42 @@ class ChatScreen extends StatefulWidget {
   _ChatScreenState createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMixin {
+class _ChatScreenState extends State<ChatScreen> {
   List<String> messages = [];
   final TextEditingController _controller = TextEditingController();
-  bool isModelLoaded = false; // Modelin yüklenip yüklenmediğini takip etmek için değişken
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
+  bool isModelLoaded = false;
+  static const MethodChannel llamaChannel = MethodChannel('com.vertex.ai/llama');
 
   @override
   void initState() {
     super.initState();
-    _loadModel(); // Modeli yükle
+    _loadModel();
+
+    // Listen for the model responses from the native side
+    llamaChannel.setMethodCallHandler((call) async {
+      if (call.method == 'onMessageResponse') {
+        String response = call.arguments;
+        setState(() {
+          messages.add("Model: $response");
+        });
+      } else if (call.method == 'onModelLoaded') {
+        String response = call.arguments;
+        setState(() {
+          isModelLoaded = true;
+          messages.add(response);
+        });
+      }
+    });
   }
 
   void _loadModel() {
     const modelPath = "/storage/emulated/0/Download/storage/emulated/0/Android/data/com.vertex.ai/files/TinyLlama.gguf";
-
-    MethodChannel llamaChannel = const MethodChannel('com.vertex.ai/llama');
-    llamaChannel.invokeMethod('loadModel', {'path': modelPath}).then((result) {
-      print(result); // Model yüklendi
-      setState(() {
-        isModelLoaded = true; // Model yüklendi olarak işaretle
-        messages.add('Model başarıyla yüklendi: $modelPath'); // Model yüklendiğini kullanıcıya bildir
-      });
-    }).catchError((error) {
-      print("Model yüklenirken hata: $error");
-      setState(() {
-        messages.add("Model yüklenirken hata: $error");
-      });
-    });
+    llamaChannel.invokeMethod('loadModel', {'path': modelPath});
   }
 
   void _sendMessage() {
     String text = _controller.text.trim();
     if (!isModelLoaded) {
-      // Eğer model henüz yüklenmediyse kullanıcıya hata mesajı göster
       setState(() {
         messages.add('Model yüklenmeden mesaj gönderilemez. Lütfen bekleyin...');
       });
@@ -61,19 +58,14 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
         _controller.clear();
       });
 
-      // Mesajı göndermek için method channel'ı kullan
-      MethodChannel llamaChannel = const MethodChannel('com.vertex.ai/llama');
-      llamaChannel.invokeMethod('sendMessage', {'message': text}).then((result) {
-        setState(() {
-          messages.add("Model: $result"); // Modelin yanıtını mesajlar listesine ekleyin
-        });
-      }).catchError((error) {
-        print("Mesaj gönderilirken hata: $error");
-        setState(() {
-          messages.add("Mesaj gönderilirken hata: $error");
-        });
-      });
+      llamaChannel.invokeMethod('sendMessage', {'message': text});
     }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
   @override

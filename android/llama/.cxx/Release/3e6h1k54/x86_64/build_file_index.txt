@@ -1,6 +1,0 @@
-C:\Users\Dell\AndroidStudioProjects\llama.cpp\CMakeLists.txt
-C:\Users\Dell\AndroidStudioProjects\llama.cpp\common\CMakeLists.txt
-C:\Users\Dell\AndroidStudioProjects\llama.cpp\examples\ai\android\llama\src\main\cpp\CMakeLists.txt
-C:\Users\Dell\AndroidStudioProjects\llama.cpp\ggml\CMakeLists.txt
-C:\Users\Dell\AndroidStudioProjects\llama.cpp\ggml\src\CMakeLists.txt
-C:\Users\Dell\AndroidStudioProjects\llama.cpp\src\CMakeLists.txt

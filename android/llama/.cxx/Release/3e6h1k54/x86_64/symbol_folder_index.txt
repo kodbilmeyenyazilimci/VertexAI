@@ -1,1 +1,0 @@
-C:\Users\Dell\AndroidStudioProjects\llama.cpp\examples\ai\build\llama\intermediates\cxx\Release\3e6h1k54\obj\x86_64

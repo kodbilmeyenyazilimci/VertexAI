@@ -14,52 +14,81 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-
         // Depolama kanalı
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, storageChannel).setMethodCallHandler { call, result ->
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            storageChannel
+        ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "getFreeStorage" -> {
                     val freeStorage = getFreeStorage()
                     result.success(freeStorage)
                 }
+
                 "getTotalStorage" -> {
                     val totalStorage = getTotalStorage()
                     result.success(totalStorage)
                 }
+
                 else -> result.notImplemented()
             }
         }
 
-        // Llama ile ilgili işlemler için kanal
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, llamaChannel).setMethodCallHandler { call, result ->
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            llamaChannel
+        ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "loadModel" -> {
                     val path = call.argument<String>("path")
                     if (path != null) {
-                        // LlamaService'i başlat
                         val llamaServiceIntent = Intent(this, LlamaService::class.java)
                         llamaServiceIntent.putExtra("action", "loadModel")
                         llamaServiceIntent.putExtra("modelPath", path)
+
+                        // Start the service
                         startService(llamaServiceIntent)
-                        result.success("Model loading started: $path")
+
+                        // Initialize the MethodChannel in the service
+                        val llamaService = LlamaService()
+                        llamaService.setMethodChannel(
+                            MethodChannel(
+                                flutterEngine.dartExecutor.binaryMessenger,
+                                llamaChannel
+                            )
+                        )
+
+                        result.success("Model loading started at path: $path")
                     } else {
                         result.error("ERROR", "Invalid model path", null)
                     }
                 }
+
                 "sendMessage" -> {
                     val message = call.argument<String>("message")
                     if (message != null) {
-                        // LlamaService'i başlat
                         val llamaServiceIntent = Intent(this, LlamaService::class.java)
                         llamaServiceIntent.putExtra("action", "sendMessage")
                         llamaServiceIntent.putExtra("message", message)
+
+                        // Start the service
                         startService(llamaServiceIntent)
+
+                        // Initialize the MethodChannel in the service
+                        val llamaService = LlamaService()
+                        llamaService.setMethodChannel(
+                            MethodChannel(
+                                flutterEngine.dartExecutor.binaryMessenger,
+                                llamaChannel
+                            )
+                        )
+
                         result.success("Message sending started: $message")
                     } else {
                         result.error("ERROR", "Invalid message", null)
                     }
                 }
-                // Diğer methodlar burada tanımlanabilir
+
                 else -> result.notImplemented()
             }
         }

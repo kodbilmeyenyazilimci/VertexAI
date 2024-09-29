@@ -1,1 +1,0 @@
-C:\Users\Dell\Desktop\llama.cpp\examples\llama.android\llama\build\intermediates\cxx\Release\49495g39\obj\x86
