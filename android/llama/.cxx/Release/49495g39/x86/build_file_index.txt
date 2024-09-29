@@ -1,0 +1,6 @@
+C:\Users\Dell\Desktop\llama.cpp\CMakeLists.txt
+C:\Users\Dell\Desktop\llama.cpp\common\CMakeLists.txt
+C:\Users\Dell\Desktop\llama.cpp\examples\llama.android\llama\src\main\cpp\CMakeLists.txt
+C:\Users\Dell\Desktop\llama.cpp\ggml\CMakeLists.txt
+C:\Users\Dell\Desktop\llama.cpp\ggml\src\CMakeLists.txt
+C:\Users\Dell\Desktop\llama.cpp\src\CMakeLists.txt

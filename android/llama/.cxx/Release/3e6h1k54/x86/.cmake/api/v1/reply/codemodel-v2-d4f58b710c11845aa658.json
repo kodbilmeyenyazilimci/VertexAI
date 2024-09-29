@@ -1,0 +1,210 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-Release-d0094a50bb2071803777.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.6.0"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0
+					]
+				},
+				{
+					"build" : "build-llama",
+					"childIndexes" : 
+					[
+						2,
+						4,
+						5
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-build-llama-Release-d7266cb6400935da019d.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.14"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 1,
+					"source" : "C:/Users/Dell/AndroidStudioProjects/llama.cpp"
+				},
+				{
+					"build" : "build-llama/ggml",
+					"childIndexes" : 
+					[
+						3
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-build-llama.ggml-Release-739aaa52d4a44e47ab88.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.14"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 2,
+					"source" : "C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml"
+				},
+				{
+					"build" : "build-llama/ggml/src",
+					"jsonFile" : "directory-build-llama.ggml.src-Release-f7a5cea1577c9834b3f4.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.14"
+					},
+					"parentIndex" : 2,
+					"projectIndex" : 2,
+					"source" : "C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/src",
+					"targetIndexes" : 
+					[
+						3
+					]
+				},
+				{
+					"build" : "build-llama/src",
+					"jsonFile" : "directory-build-llama.src-Release-66fcad7b2e8308bd97ae.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.14"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 1,
+					"source" : "C:/Users/Dell/AndroidStudioProjects/llama.cpp/src",
+					"targetIndexes" : 
+					[
+						4
+					]
+				},
+				{
+					"build" : "build-llama/common",
+					"jsonFile" : "directory-build-llama.common-Release-3feae43e549efda93808.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.14"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 1,
+					"source" : "C:/Users/Dell/AndroidStudioProjects/llama.cpp/common",
+					"targetIndexes" : 
+					[
+						1,
+						2
+					]
+				}
+			],
+			"name" : "Release",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1
+					],
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "ai",
+					"targetIndexes" : 
+					[
+						0
+					]
+				},
+				{
+					"childIndexes" : 
+					[
+						2
+					],
+					"directoryIndexes" : 
+					[
+						1,
+						4,
+						5
+					],
+					"name" : "llama.cpp",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						1,
+						2,
+						4
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						2,
+						3
+					],
+					"name" : "ggml",
+					"parentIndex" : 1,
+					"targetIndexes" : 
+					[
+						3
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "ai::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ai-Release-7c2753be1f2614f61630.json",
+					"name" : "ai",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 5,
+					"id" : "build_info::@8bf2afb4d8037c7b7d92",
+					"jsonFile" : "target-build_info-Release-2dd23ac7b9bde8779cf6.json",
+					"name" : "build_info",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 5,
+					"id" : "common::@8bf2afb4d8037c7b7d92",
+					"jsonFile" : "target-common-Release-d31760226a78a0426e83.json",
+					"name" : "common",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 3,
+					"id" : "ggml::@23533c6d68a59d54598d",
+					"jsonFile" : "target-ggml-Release-603d8652e4746ec2e923.json",
+					"name" : "ggml",
+					"projectIndex" : 2
+				},
+				{
+					"directoryIndex" : 4,
+					"id" : "llama::@b791850eb95f38641ccb",
+					"jsonFile" : "target-llama-Release-e1b6b08f423eb37ca240.json",
+					"name" : "llama",
+					"projectIndex" : 1
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "C:/Users/Dell/AndroidStudioProjects/llama.cpp/examples/ai/android/llama/.cxx/Release/3e6h1k54/x86",
+		"source" : "C:/Users/Dell/AndroidStudioProjects/llama.cpp/examples/ai/android/llama/src/main/cpp"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 3
+	}
+}

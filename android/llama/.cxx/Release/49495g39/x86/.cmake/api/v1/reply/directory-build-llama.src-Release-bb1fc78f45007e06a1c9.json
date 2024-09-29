@@ -1,0 +1,14 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : [],
+		"nodes" : []
+	},
+	"installers" : [],
+	"paths" : 
+	{
+		"build" : "build-llama/src",
+		"source" : "C:/Users/Dell/Desktop/llama.cpp/src"
+	}
+}
