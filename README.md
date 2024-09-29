@@ -1,16 +1,12 @@
-# ai
+# My AI Project
 
-A new Flutter project.
+This project is shared **for help and review purposes only**. You are not allowed to copy, modify, or distribute this code for any purpose. All rights are reserved by the project owner.
 
-## Getting Started
+## License
+This project is licensed under a custom license. Please refer to the [LICENSE](./LICENSE) file for details.
 
-This project is a starting point for a Flutter application.
+## How to Contribute
+Feel free to open issues or submit pull requests for any bugs you may find, or suggest improvements. However, you may not reuse or republish any part of this code.
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Future License Changes
+The license of this project may change in the future. Keep an eye on the [LICENSE](./LICENSE) file for updates.
