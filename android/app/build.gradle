@@ -38,15 +38,6 @@ android {
         }
     }
 
-    signingConfigs {
-        release {
-            storeFile file("C:/Users/Dell/Desktop/ai.jks") // Anahtar dosyanızın yolu
-            storePassword "123456789@Aa112112"   // Anahtar dosyası şifresi
-            keyAlias "ai"                // Anahtar takma adı
-            keyPassword "123456789@Aa112112"        // Anahtar şifresi
-        }
-    }
-
     buildTypes {
         release {
             minifyEnabled true   // Enable code shrinking
