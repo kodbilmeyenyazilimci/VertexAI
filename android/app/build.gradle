@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.vertex.ai"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 34
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -29,8 +29,8 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 26
-        targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
+        targetSdk = 34
+        versionCode = 2
         versionName = flutter.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -38,11 +38,20 @@ android {
         }
     }
 
+    signingConfigs {
+        release {
+            storeFile file("C:/Users/Dell/Desktop/ai.jks") // Anahtar dosyanızın yolu
+            storePassword "123456789@Aa112112"   // Anahtar dosyası şifresi
+            keyAlias "ai"                // Anahtar takma adı
+            keyPassword "123456789@Aa112112"        // Anahtar şifresi
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled true   // Enable code shrinking
             shrinkResources true // Enable resource shrinking
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

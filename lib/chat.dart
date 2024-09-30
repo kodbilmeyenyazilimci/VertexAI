@@ -26,13 +26,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (call.method == 'onMessageResponse') {
         String response = call.arguments;
         setState(() {
-          messages.add("Model: $response");
+          messages.add("Model: $response"); // Yapay zekadan gelen yanıt.
         });
       } else if (call.method == 'onModelLoaded') {
         String response = call.arguments;
         setState(() {
           isModelLoaded = true;
-          messages.add(response);
+          messages.add("Model yüklendi: $response"); // Modelin yüklendiği mesaj.
         });
       }
     });
@@ -45,16 +45,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _sendMessage() {
     String text = _controller.text.trim();
-    if (!isModelLoaded) {
-      setState(() {
-        messages.add('Model yüklenmeden mesaj gönderilemez. Lütfen bekleyin...');
-      });
-      return;
-    }
 
     if (text.isNotEmpty) {
       setState(() {
-        messages.add("Sen: $text");
+        messages.add("Sen: $text"); // Kullanıcının mesajı.
         _controller.clear();
       });
 
@@ -121,11 +115,13 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: Colors.purple[100],
+                        color: messages[index].startsWith("Sen: ") ? Colors.blue[100] : Colors.green[100],
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text(
-                          messages[index], style: const TextStyle(color: Colors.black)),
+                        messages[index],
+                        style: const TextStyle(color: Colors.black),
+                      ),
                     ),
                   ),
                 );

@@ -20,7 +20,7 @@ class LLamaAndroid {
             Log.d(tag, "Dedicated thread for native code: ${Thread.currentThread().name}")
 
             // No-op if called more than once.
-            System.loadLibrary("llama-android")
+            System.loadLibrary("ai")
 
             // Set llama log handler to Android
             log_to_android()

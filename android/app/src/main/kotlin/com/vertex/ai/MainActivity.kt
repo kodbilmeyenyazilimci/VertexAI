@@ -1,8 +1,12 @@
 package com.vertex.ai
 
+import android.annotation.SuppressLint
+import android.app.ActivityManager
+import android.content.Context
 import android.content.Intent
 import android.os.Environment
 import android.os.StatFs
+import android.util.Log  // Log için import
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -11,9 +15,25 @@ class MainActivity : FlutterActivity() {
 
     private val storageChannel = "com.vertex.ai/storage"
     private val llamaChannel = "com.vertex.ai/llama"
+    private val memoryChannel = "com.vertex.ai/memory"  // Yeni kanal
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // RAM kanalı
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            memoryChannel
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getDeviceMemory" -> {
+                    val memoryInfo = getDeviceMemory()
+                    result.success(memoryInfo)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
         // Depolama kanalı
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -34,6 +54,7 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        // Llama kanalı
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             llamaChannel
@@ -94,9 +115,17 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // Mevcut olan RAM miktarını döner (GB cinsinden)
+    private fun getDeviceMemory(): Long {
+        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val memoryInfo = ActivityManager.MemoryInfo()
+        activityManager.getMemoryInfo(memoryInfo)
+        return memoryInfo.totalMem / (1024 * 1024) // GB cinsine dönüştür
+    }
+
     private fun getFreeStorage(): Long {
         val stat = StatFs(Environment.getExternalStorageDirectory().path)
-        return stat.blockSizeLong * stat.availableBlocksLong / (1024 * 1024) // MB olarak dönüyor
+        return stat.blockSizeLong * stat.availableBlocksLong / (1024 * 1024)
     }
 
     private fun getTotalStorage(): Long {
