@@ -10,7 +10,8 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 
-class MainViewModel(private val llamaAndroid: LLamaAndroid = LLamaAndroid.instance()): ViewModel() {
+class MainViewModel(private val llamaAndroid: LLamaAndroid = LLamaAndroid.instance()) : ViewModel() {
+
     companion object {
         @JvmStatic
         private val NanosPerSecond = 1_000_000_000.0
@@ -36,11 +37,10 @@ class MainViewModel(private val llamaAndroid: LLamaAndroid = LLamaAndroid.instan
         }
     }
 
-    fun send() {
+    fun send(param: (Any) -> Any) {
         val text = message
         message = ""
 
-        // Add to messages console.
         messages += text
         messages += ""
 

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'chat.dart';
 import 'download.dart';
 import 'system_info.dart';
 
@@ -18,6 +19,8 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
   late Map<String, bool> _downloadStates;
   late Map<String, bool> _isDownloading;
   SystemInfoData? _systemInfo; // Nullable to handle initialization
+  String? _selectedModelPath; // Seçilen modelin dosya yolu
+  String? _selectedModelTitle; // Seçilen modelin adı
 
   final List<Map<String, String>> _models = [
     {
@@ -27,13 +30,19 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
       'size': '668 MB'
     },
     {
-      'title': 'Phi 2 Instruct-v1',
+      'title': 'Phi-2-Instruct-v1',
       'description': "Phi 2 Instruct-v1, yüksek performanslı ve küçük boyutlu bir AI modelidir. Model, 4-bit kuantize edilerek daha verimli bir şekilde çalışması sağlanmıştır.",
       'url': 'https://huggingface.co/timothyckl/phi-2-instruct-v1/resolve/23d6e417677bc32b1fb4947615acbb616556142a/ggml-model-q4km.gguf',
       'size': '1.6 GB'
     },
     {
-      'title': 'Gemma 1.1',
+      'title': 'Mistral-7B-Turkish',
+      'description': "Mistral 7B Instruct v0.2 Turkish, yüksek performans ve verimlilik sunan bir yapay zeka modelidir. 5-bit kuantizasyon teknolojisi ile optimize edilmiş olup, 7 milyar parametreye sahiptir. Türkçe dilinde etkili bir şekilde görev alabilir.",
+      'url': 'https://huggingface.co/sayhan/Mistral-7B-Instruct-v0.2-turkish-GGUF/resolve/main/mistral-7b-instruct-v0.2-turkish.Q5_K_M.gguf?download=true',
+      'size': '4.8 GB'
+    },
+    {
+      'title': 'Gemma',
       'description': "Gemma 1.1, yüksek performanslı ve kompakt bir AI modelidir. 4-bit kuantizasyon teknolojisi ile optimize edilmiştir ve 7 milyar parametreye sahiptir.",
       'url': 'https://huggingface.co/ggml-org/gemma-1.1-7b-it-Q4_K_M-GGUF/resolve/main/gemma-1.1-7b-it.Q4_K_M.gguf?download=true',
       'size': '5.0 GB'
@@ -104,9 +113,9 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
     if (ramGB <= 3) {
       isRAMSufficient = title == 'TinyLlama';
     } else if (ramGB <= 4) {
-      isRAMSufficient = title == 'TinyLlama' || title == 'Phi 2 Instruct-v1';
+      isRAMSufficient = title == 'TinyLlama' || title == 'Phi-2-Instruct-v1';
     } else if (ramGB < 8) {
-      isRAMSufficient = title == 'TinyLlama' || title == 'Phi 2 Instruct-v1' || title == 'Gemma 1.1';
+      isRAMSufficient = title == 'TinyLlama' || title == 'Phi-2-Instruct-v1' || title == 'Mistral-7B-Turkish' || title == 'Gemma';
     } else {
       isRAMSufficient = true; // All models for >= 8 GB RAM
     }
@@ -138,94 +147,100 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
     final buttonText = _getDownloadButtonText(title, size);
     final bool isDisabled = buttonText != 'İndir'; // Disable button if not "Download"
 
-    return FadeTransition(
-      opacity: isDownloading ? _fadeAnimation : const AlwaysStoppedAnimation(1.0),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 16.0),
-        padding: const EdgeInsets.all(16.0),
-        decoration: BoxDecoration(
-          color: Colors.grey[800],
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.4),
-              spreadRadius: 1,
-              blurRadius: 6,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
+    return GestureDetector(
+      onTap: isDownloaded
+          ? () => _selectModel(title, '/storage/emulated/0/Download/storage/emulated/0/Android/data/com.vertex.ai/files/$title.gguf') // Seçim yapılınca modelin yolu ve adı ile çağır
+          : null,  // İndirilmemişse tıklanamaz
+      child: FadeTransition(
+        opacity: isDownloading ? _fadeAnimation : const AlwaysStoppedAnimation(1.0),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 16.0),
+          padding: const EdgeInsets.all(16.0),
+          decoration: BoxDecoration(
+            color: Colors.grey[800],
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.4),
+                spreadRadius: 1,
+                blurRadius: 6,
+                offset: const Offset(0, 3),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              description,
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.7),
-                fontSize: 14,
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                if (isDownloaded)
-                  const Row(
+              const SizedBox(height: 8),
+              Text(
+                description,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  if (isDownloaded)
+                    const Row(
+                      children: [
+                        Icon(Icons.check, color: Colors.green),
+                        SizedBox(width: 4),
+                        Text(
+                          'İndirildi',  // "Downloaded"
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ],
+                    )
+                  else
+                    ElevatedButton(
+                      onPressed: isDownloading || isDisabled ? null : () => _downloadModel(url, title),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isDownloading
+                            ? Colors.grey
+                            : isDisabled
+                            ? Colors.black
+                            : Colors.purple[400],
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: Text(
+                        isDownloading ? 'İndiriliyor...' : buttonText,  // "Downloading..."
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  Row(
                     children: [
-                      Icon(Icons.check, color: Colors.green),
-                      SizedBox(width: 4),
+                      Icon(Icons.storage, color: Colors.grey[400]),
+                      const SizedBox(width: 4),
                       Text(
-                        'İndirildi',  // "Downloaded"
-                        style: TextStyle(color: Colors.white),
+                        size,
+                        style: TextStyle(
+                          color: Colors.grey[400],
+                        ),
                       ),
                     ],
-                  )
-                else
-                  ElevatedButton(
-                    onPressed: isDownloading || isDisabled ? null : () => _downloadModel(url, title),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: isDownloading
-                          ? Colors.grey
-                          : isDisabled
-                          ? Colors.black
-                          : Colors.purple[400],
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: Text(
-                      isDownloading ? 'İndiriliyor...' : buttonText,  // "Downloading..."
-                      style: const TextStyle(color: Colors.white),
-                    ),
                   ),
-                Row(
-                  children: [
-                    Icon(Icons.storage, color: Colors.grey[400]),
-                    const SizedBox(width: 4),
-                    Text(
-                      size,
-                      style: TextStyle(
-                        color: Colors.grey[400],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
+
 
   void _downloadModel(String url, String title) async {
     final prefs = await SharedPreferences.getInstance();
@@ -331,6 +346,20 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
         });
       }
     }
+  }
+
+  void _selectModel(String title, String path) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('selected_model_path', path);
+    await prefs.setString('selected_model_title', title);
+    setState(() {
+      _selectedModelPath = path;
+      _selectedModelTitle = title;
+    });
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const ChatScreen()),
+    );
   }
 
   void _checkDownloadingStates() async {

@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Environment
 import android.os.StatFs
-import android.util.Log  // Log için import
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -15,7 +14,7 @@ class MainActivity : FlutterActivity() {
 
     private val storageChannel = "com.vertex.ai/storage"
     private val llamaChannel = "com.vertex.ai/llama"
-    private val memoryChannel = "com.vertex.ai/memory"  // Yeni kanal
+    private val memoryChannel = "com.vertex.ai/memory"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -67,10 +66,10 @@ class MainActivity : FlutterActivity() {
                         llamaServiceIntent.putExtra("action", "loadModel")
                         llamaServiceIntent.putExtra("modelPath", path)
 
-                        // Start the service
+                        // Servisi başlat
                         startService(llamaServiceIntent)
 
-                        // Initialize the MethodChannel in the service
+                        // Servise MethodChannel iletin
                         val llamaService = LlamaService()
                         llamaService.setMethodChannel(
                             MethodChannel(
@@ -92,10 +91,10 @@ class MainActivity : FlutterActivity() {
                         llamaServiceIntent.putExtra("action", "sendMessage")
                         llamaServiceIntent.putExtra("message", message)
 
-                        // Start the service
+                        // Servisi başlat
                         startService(llamaServiceIntent)
 
-                        // Initialize the MethodChannel in the service
+                        // Servise MethodChannel iletin
                         val llamaService = LlamaService()
                         llamaService.setMethodChannel(
                             MethodChannel(
@@ -115,21 +114,23 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    // Mevcut olan RAM miktarını döner (GB cinsinden)
+    // Mevcut olan RAM miktarını döner (MB cinsinden)
     private fun getDeviceMemory(): Long {
         val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val memoryInfo = ActivityManager.MemoryInfo()
         activityManager.getMemoryInfo(memoryInfo)
-        return memoryInfo.totalMem / (1024 * 1024) // GB cinsine dönüştür
+        return memoryInfo.totalMem / (1024 * 1024)  // MB cinsinden döner
     }
 
+    // Boş depolama alanını MB olarak döner
     private fun getFreeStorage(): Long {
         val stat = StatFs(Environment.getExternalStorageDirectory().path)
-        return stat.blockSizeLong * stat.availableBlocksLong / (1024 * 1024)
+        return stat.blockSizeLong * stat.availableBlocksLong / (1024 * 1024)  // MB cinsinden döner
     }
 
+    // Toplam depolama alanını MB olarak döner
     private fun getTotalStorage(): Long {
         val stat = StatFs(Environment.getExternalStorageDirectory().path)
-        return stat.blockSizeLong * stat.blockCountLong / (1024 * 1024) // MB olarak dönüyor
+        return stat.blockSizeLong * stat.blockCountLong / (1024 * 1024)  // MB cinsinden döner
     }
 }

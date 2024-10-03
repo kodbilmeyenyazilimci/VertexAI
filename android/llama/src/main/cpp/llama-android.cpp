@@ -393,54 +393,64 @@ Java_android_llama_cpp_LLamaAndroid_completion_1init(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_android_llama_cpp_LLamaAndroid_completion_1loop(
+        Java_android_llama_cpp_LLamaAndroid_completion_1loop(
         JNIEnv * env,
         jobject,
         jlong context_pointer,
-        jlong batch_pointer,
+jlong batch_pointer,
         jlong sampler_pointer,
-        jint n_len,
+jint n_len,
         jobject intvar_ncur
 ) {
-    const auto context = reinterpret_cast<llama_context *>(context_pointer);
-    const auto batch   = reinterpret_cast<llama_batch   *>(batch_pointer);
-    const auto sampler = reinterpret_cast<llama_sampler *>(sampler_pointer);
-    const auto model = llama_get_model(context);
+const auto context = reinterpret_cast<llama_context *>(context_pointer);
+const auto batch   = reinterpret_cast<llama_batch   *>(batch_pointer);
+const auto sampler = reinterpret_cast<llama_sampler *>(sampler_pointer);
+const auto model = llama_get_model(context);
 
-    if (!la_int_var) la_int_var = env->GetObjectClass(intvar_ncur);
-    if (!la_int_var_value) la_int_var_value = env->GetMethodID(la_int_var, "getValue", "()I");
-    if (!la_int_var_inc) la_int_var_inc = env->GetMethodID(la_int_var, "inc", "()V");
+if (!la_int_var) la_int_var = env->GetObjectClass(intvar_ncur);
+if (!la_int_var_value) la_int_var_value = env->GetMethodID(la_int_var, "getValue", "()I");
+if (!la_int_var_inc) la_int_var_inc = env->GetMethodID(la_int_var, "inc", "()V");
 
-    // sample the most likely token
-    const auto new_token_id = llama_sampler_sample(sampler, context, -1);
+// sample the most likely token
+const auto new_token_id = llama_sampler_sample(sampler, context, -1);
 
-    const auto n_cur = env->CallIntMethod(intvar_ncur, la_int_var_value);
-    if (llama_token_is_eog(model, new_token_id) || n_cur == n_len) {
-        return nullptr;
-    }
+const auto n_cur = env->CallIntMethod(intvar_ncur, la_int_var_value);
+if (llama_token_is_eog(model, new_token_id) || n_cur == n_len) {
+return nullptr;
+}
 
-    auto new_token_chars = llama_token_to_piece(context, new_token_id);
-    cached_token_chars += new_token_chars;
+auto new_token_chars = llama_token_to_piece(context, new_token_id);
+cached_token_chars += new_token_chars;
 
-    jstring new_token = nullptr;
-    if (is_valid_utf8(cached_token_chars.c_str())) {
-        new_token = env->NewStringUTF(cached_token_chars.c_str());
-        LOGi("cached: %s, new_token_chars: `%s`, id: %d", cached_token_chars.c_str(), new_token_chars.c_str(), new_token_id);
-        cached_token_chars.clear();
-    } else {
-        new_token = env->NewStringUTF("");
-    }
+jstring new_token = nullptr;
+if (is_valid_utf8(cached_token_chars.c_str())) {
+new_token = env->NewStringUTF(cached_token_chars.c_str());
 
-    llama_batch_clear(*batch);
-    llama_batch_add(*batch, new_token_id, n_cur, { 0 }, true);
+// Yeni tokeni Kotlin'e JNI aracılığıyla ilet
+jclass llamaServiceClass = env->FindClass("com/vertex/ai/LlamaService");
+jmethodID sendTokenMethod = env->GetStaticMethodID(llamaServiceClass, "sendTokenToFlutter", "(Ljava/lang/String;)V");
 
-    env->CallVoidMethod(intvar_ncur, la_int_var_inc);
+if (sendTokenMethod != nullptr) {
+jstring jToken = env->NewStringUTF(cached_token_chars.c_str());
+env->CallStaticVoidMethod(llamaServiceClass, sendTokenMethod, jToken);
+}
 
-    if (llama_decode(context, *batch) != 0) {
-        LOGe("llama_decode() returned null");
-    }
+LOGi("cached: %s, new_token_chars: `%s`, id: %d", cached_token_chars.c_str(), new_token_chars.c_str(), new_token_id);
+cached_token_chars.clear();
+} else {
+new_token = env->NewStringUTF("");
+}
 
-    return new_token;
+llama_batch_clear(*batch);
+llama_batch_add(*batch, new_token_id, n_cur, { 0 }, true);
+
+env->CallVoidMethod(intvar_ncur, la_int_var_inc);
+
+if (llama_decode(context, *batch) != 0) {
+LOGe("llama_decode() returned null");
+}
+
+return new_token;
 }
 
 extern "C"
