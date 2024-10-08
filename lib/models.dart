@@ -2,18 +2,17 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'chat.dart';
 import 'download.dart';
 import 'system_info.dart';
 
-class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+class ModelsScreen extends StatefulWidget {
+  const ModelsScreen({super.key});
 
   @override
-  _SettingsScreenState createState() => _SettingsScreenState();
+  _ModelsScreenState createState() => _ModelsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStateMixin {
+class _ModelsScreenState extends State<ModelsScreen> with TickerProviderStateMixin {
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
   late Map<String, bool> _downloadStates;
@@ -26,8 +25,8 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
     {
       'title': 'TinyLlama',
       'description': "TinyLlama, 1.1 milyar parametreye sahip ve Llama 2'nin mimarisini kullanan bir dil modelidir. 4-bit kuantize edilmiştir ve daha düşük hesaplama gücü ile yüksek performans sunar.",
-      'url': 'https://huggingface.co/mjschock/TinyLlama-1.1B-Chat-v1.0-Q4_K_M-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0-q4_k_m.gguf',
-      'size': '668 MB'
+      'url': 'https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q8_0.gguf?download=true',
+      'size': '1.1 GB'
     },
     {
       'title': 'Phi-2-Instruct-v1',
@@ -241,7 +240,6 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
     );
   }
 
-
   void _downloadModel(String url, String title) async {
     final prefs = await SharedPreferences.getInstance();
     prefs.setBool('is_downloading_$title', true);
@@ -303,7 +301,7 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
 
   Future<void> _checkFileExists(String title) async {
     // Dosyanın manuel olarak kaydedildiği yolu belirle
-    final manualPath = '/storage/emulated/0/Download/storage/emulated/0/Android/data/com.vertex.ai/files/';
+    const manualPath = '/storage/emulated/0/Download/storage/emulated/0/Android/data/com.vertex.ai/files/';
     final filename = '${title.replaceAll(' ', '').replaceAll('/', '')}.gguf';
     final filePath = '$manualPath$filename';
 
@@ -356,10 +354,6 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
       _selectedModelPath = path;
       _selectedModelTitle = title;
     });
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const ChatScreen()),
-    );
   }
 
   void _checkDownloadingStates() async {
@@ -378,61 +372,26 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[900],
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 48.0, left: 12.0),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                const SizedBox(width: 8),
-                const Text(
-                  'Ayarlar',
-                  style: TextStyle(
-                    fontFamily: 'Roboto',
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
+      backgroundColor: const Color(0xFF141414),
+      appBar: AppBar(
+        title: const Text(
+          'Modeller',
+          style: TextStyle(
+            fontFamily: 'Roboto',
+            color: Colors.white,
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
           ),
-          Expanded(
+        ),
+        backgroundColor: const Color(0xFF141414),
+        elevation: 0,
+      ),
+      body: Column(
+        children: [
+          Expanded(  // Place Expanded within the body
             child: ListView(
               padding: const EdgeInsets.all(16.0),
               children: [
-                Align(
-                  alignment: Alignment.topCenter,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        const Text(
-                          'Modeller',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 22,
-                            height: 2,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(),
-                        Container(
-                          height: 1.4,
-                          width: 120,
-                          color: Colors.white,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
                 ..._models.map((model) {
                   return _buildModelTile(
                     model['title']!,
@@ -467,7 +426,6 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                     ),
                   ),
                 ),
-                // Display system information if available
                 if (_systemInfo != null)
                   Container(
                     padding: const EdgeInsets.all(16.0),
