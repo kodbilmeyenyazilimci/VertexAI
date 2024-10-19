@@ -7,32 +7,31 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 import 'account.dart';
+import 'main.dart';
 
 // Message class representing user and model messages
 class Message {
-  final String text;
+  String text; // Made mutable to allow updates
   final bool isUserMessage;
   Message({required this.text, required this.isUserMessage});
 }
 
 class ChatScreen extends StatefulWidget {
-  final String? conversationID;
-  final String? conversationTitle;
+  String? conversationID;
+  String? conversationTitle;
 
-  const ChatScreen({super.key, this.conversationID, this.conversationTitle});
+  ChatScreen({Key? key, this.conversationID, this.conversationTitle}) : super(key: key);
 
   @override
-  _ChatScreenState createState() => _ChatScreenState();
+  ChatScreenState createState() => ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   List<Message> messages = []; // To store conversation messages
   final TextEditingController _controller = TextEditingController(); // To handle input field text
   bool isModelLoaded = false; // To track if the model is loaded
   bool isWaitingForResponse = false; // Track if awaiting model's response
-  List<String> modelResponses = []; // Model responses are collected here
   Timer? responseTimer; // Timer to handle delayed response
-  int responseIndex = 0; // Index to track the model's response
   final uuid = Uuid(); // UUID to generate unique conversation IDs
   String? conversationID; // Conversation ID for current chat
   String? conversationTitle; // Title for the current conversation
@@ -45,18 +44,38 @@ class _ChatScreenState extends State<ChatScreen> {
   late final ScrollController _scrollController = ScrollController(); // To handle message list scrolling
 
   final List<String> suggestions = [
-    "👋 Merhaba", "😊 Nasılsın?", "🆘 Bana yardım edebilir misin?",
-    "🌦️ Bugün hava nasıl?", "🍕 En sevdiğin yemek nedir?",
-    "⚽ Futbol sever misin?", "🎵 Hangi müzikleri dinlersin?",
+    "👋 Merhaba",
+    "😊 Nasılsın?",
+    "🆘 Bana yardım edebilir misin?",
+    "🌦️ Bugün hava nasıl?",
+    "🍕 En sevdiğin yemek nedir?",
+    "⚽ Futbol sever misin?",
+    "🎵 Hangi müzikleri dinlersin?",
     "🏖️ Tatilde nereye gitmek istersin?"
   ];
 
   final List<String> additionalSuggestions = [
-    "📚 Hangi kitabı okuyorsun?", "🎬 En son hangi filmi izledin?",
-    "🏞️ Doğayı sever misin?", "🖼️ Hangi sanat dalıyla ilgileniyorsun?",
-    "👩‍🍳 Yemek yapmayı sever misin?", "🚴‍♂️ Spor yapar mısın?",
-    "🌍 Seyahat etmeyi sever misin?", "🤖 Gelecek hakkında ne düşünüyorsun?"
+    "📚 Hangi kitabı okuyorsun?",
+    "🎬 En son hangi filmi izledin?",
+    "🏞️ Doğayı sever misin?",
+    "🖼️ Hangi sanat dalıyla ilgileniyorsun?",
+    "👩‍🍳 Yemek yapmayı sever misin?",
+    "🚴‍♂️ Spor yapar mısın?",
+    "🌍 Seyahat etmeyi sever misin?",
+    "🤖 Gelecek hakkında ne düşünüyorsun?"
   ];
+
+  // For the suggestions bar (bottom panel)
+  late final ScrollController _suggestionsScrollController;
+  late final AnimationController _suggestionsAnimationController;
+
+  // For the additional suggestions bar (top panel)
+  late final ScrollController _additionalSuggestionsScrollController;
+  late final AnimationController _additionalSuggestionsAnimationController;
+
+  // For screen transitions
+  late final AnimationController _fadeAnimationController;
+  late Animation<double> _fadeAnimation;
 
   // Initialization: Load model, set up message handler, load previous messages if any
   @override
@@ -66,7 +85,57 @@ class _ChatScreenState extends State<ChatScreen> {
     llamaChannel.setMethodCallHandler(_methodCallHandler); // Sets method channel for native communication
     if (widget.conversationID != null) {
       _loadPreviousMessages(widget.conversationID!); // Load past messages if available
+      conversationID = widget.conversationID;
+      conversationTitle = widget.conversationTitle;
     }
+
+    // Initialize scroll controllers
+    _suggestionsScrollController = ScrollController();
+    _additionalSuggestionsScrollController = ScrollController();
+
+    // Initialize animation controllers with increased duration for slower animation
+    _suggestionsAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 30),
+    )..addListener(() {
+      if (_suggestionsScrollController.hasClients) {
+        _suggestionsScrollController.jumpTo(
+          _suggestionsAnimationController.value *
+              _suggestionsScrollController.position.maxScrollExtent,
+        );
+      }
+    });
+
+    // For the bottom panel, scroll left to right (value from 0 to 1)
+    _suggestionsAnimationController.repeat();
+
+    _additionalSuggestionsAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 30),
+    )..addListener(() {
+      if (_additionalSuggestionsScrollController.hasClients) {
+        _additionalSuggestionsScrollController.jumpTo(
+          _additionalSuggestionsAnimationController.value *
+              _additionalSuggestionsScrollController.position.maxScrollExtent,
+        );
+      }
+    });
+
+    // For the top panel, scroll left to right (value from 0 to 1)
+    _additionalSuggestionsAnimationController.repeat();
+
+    // Initialize fade animation for screen transitions
+    _fadeAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 100),
+      vsync: this,
+    );
+
+    _fadeAnimation = CurvedAnimation(
+      parent: _fadeAnimationController,
+      curve: Curves.easeInOut,
+    );
+
+    _fadeAnimationController.forward();
   }
 
   // Load model configuration and invoke native method to load it
@@ -87,16 +156,15 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // Handling tokenized message response from model
+  // Ensure that _onMessageResponse properly updates the last message
   void _onMessageResponse(String token) {
-    setState(() {
-      if (modelResponses.length <= responseIndex) {
-        modelResponses.add(token); // Add first token
-      } else {
-        modelResponses[responseIndex] += token; // Append tokens to the current response
-      }
-    });
-    _startResponseTimeout(); // Start or reset the timer for model's response
+    if (isWaitingForResponse && messages.isNotEmpty && !messages.last.isUserMessage) {
+      setState(() {
+        messages.last.text += token; // Append token to the last message
+      });
+      _startResponseTimeout(); // Start or reset the timer for model's response
+      _scrollToBottom(); // Scroll to show the ongoing response
+    }
   }
 
   // Starts a timer to handle response completion
@@ -105,29 +173,22 @@ class _ChatScreenState extends State<ChatScreen> {
     responseTimer = Timer(const Duration(seconds: 5), _finalizeResponse); // Call _finalizeResponse after 5 seconds
   }
 
-// Finalize and display the model's response in the chat
+  // Finalize and display the model's response in the chat
   void _finalizeResponse() {
-    if (modelResponses.isNotEmpty) {
+    if (isWaitingForResponse && messages.isNotEmpty && !messages.last.isUserMessage) {
       setState(() {
-        messages.add(Message(text: modelResponses.join(" "), isUserMessage: false)); // Add model's response to chat
-        responseIndex++;
-        modelResponses.clear(); // Clear response buffer
+        isWaitingForResponse = false; // Set waiting state to false
       });
 
-      if (conversationID == null && messages.isNotEmpty) {
-        conversationID = uuid.v4(); // Generate conversation ID
-        conversationTitle = messages.first.text; // First message becomes the title
-        _saveConversationTitle(conversationTitle!); // Save conversation title
-      }
+      String fullResponse = messages.last.text;
 
-      _saveMessageToConversation(messages.last.text, false); // Save the model's response
+      // No need to set conversationID here; it's already set in _sendMessage
+
+      _saveMessageToConversation(fullResponse, false); // Save the model's response
+      _scrollToBottom(); // Scroll to show the new message
     }
 
     responseTimer?.cancel(); // Stop the timer
-    setState(() {
-      isWaitingForResponse = false; // Set waiting state to false
-      // Don't clear the message bubble here, just retain the text
-    });
   }
 
   // Loads previous messages from storage using conversation ID
@@ -138,10 +199,26 @@ class _ChatScreenState extends State<ChatScreen> {
     if (messagesList != null) {
       for (String message in messagesList) {
         bool isUserMessage = message.startsWith("User: ");
-        messages.add(Message(text: message.substring(message.indexOf(": ") + 2), isUserMessage: isUserMessage));
+        messages.add(Message(
+          text: message.substring(message.indexOf(": ") + 2),
+          isUserMessage: isUserMessage,
+        ));
       }
-      setState(() {}); // Refresh UI
+
+      // After loading messages, check if messages list is not empty
+      if (messages.isNotEmpty) {
+        // Hide the suggestion panels and background
+        setState(() {
+          suggestionsOpacity = 0.0;
+          additionalSuggestionsOpacity = 0.0;
+          logoOpacity = 0.0;
+        });
+        _suggestionsAnimationController.stop();
+        _additionalSuggestionsAnimationController.stop();
+      }
     }
+    setState(() {}); // Refresh UI
+    _scrollToBottom(); // Scroll to show loaded messages
   }
 
   // Saves the conversation title
@@ -153,16 +230,6 @@ class _ChatScreenState extends State<ChatScreen> {
   // Saves individual messages to the conversation
   Future<void> _saveMessageToConversation(String message, bool isUserMessage) async {
     final prefs = await SharedPreferences.getInstance();
-
-    if (conversationID == null && messages.isNotEmpty) {
-      conversationID = uuid.v4(); // Create conversation ID if missing
-      conversationTitle = messages.first.text; // Set first message as title
-      await prefs.setString('current_conversation_id', conversationID!);
-
-      final List<String>? conversations = prefs.getStringList('conversations') ?? [];
-      conversations?.add(conversationTitle!); // Add conversation title to list
-      await prefs.setStringList('conversations', conversations!);
-    }
 
     final List<String> conversationMessages = prefs.getStringList(conversationID!) ?? [];
     conversationMessages.add(isUserMessage ? "User: $message" : "Model: $message");
@@ -179,18 +246,47 @@ class _ChatScreenState extends State<ChatScreen> {
         _controller.clear(); // Clear input field
         isWaitingForResponse = true; // Set waiting for response
         _isSendButtonVisible = false; // Hide send button
-        modelResponses.clear(); // Clear previous model responses
-        responseIndex = 0; // Reset response index
+
+        // Add an empty model message to receive tokens
+        messages.add(Message(text: "", isUserMessage: false)); // Add empty model response
       });
 
-      if (messages.length == 1) {
-        _saveConversation(text); // Save conversation if it's the first message
+      if (conversationID == null) {
+        conversationID = uuid.v4(); // Generate conversation ID
+        conversationTitle = text; // Use the user's first message as the title
+        _saveConversationTitle(conversationTitle!); // Save conversation title
+        _saveConversation(conversationTitle!); // Save conversation immediately
+
+        // Notify the MenuScreen to reload conversations
+        mainScreenKey.currentState?.menuScreenKey.currentState?.reloadConversations();
       }
+
+      // Save the user's message
+      _saveMessageToConversation(text, true);
 
       llamaChannel.invokeMethod('sendMessage', {'message': text}); // Send message to model
       _startResponseTimeout(); // Start response timeout timer
       _fadeOutSuggestionsAndLogo(); // Fade out UI elements
+      _scrollToBottom(); // Scroll to show the new message
     }
+  }
+
+  // Updated resetConversation to reset to initial state with suggestions and background visible
+  void resetConversation() {
+    setState(() {
+      messages.clear();
+      conversationID = null;
+      conversationTitle = null;
+      widget.conversationID = null;
+      widget.conversationTitle = null;
+      suggestionsOpacity = 1.0;
+      additionalSuggestionsOpacity = 1.0;
+      logoOpacity = 1.0;
+      isWaitingForResponse = false;
+      _isSendButtonVisible = false;
+    });
+    _suggestionsAnimationController.repeat();
+    _additionalSuggestionsAnimationController.repeat();
   }
 
   // Fades out the suggestions and logo after sending a message
@@ -200,6 +296,8 @@ class _ChatScreenState extends State<ChatScreen> {
       additionalSuggestionsOpacity = 0.0; // Fade out additional suggestions
       logoOpacity = 0.0; // Fade out logo
     });
+    _suggestionsAnimationController.stop();
+    _additionalSuggestionsAnimationController.stop();
   }
 
   // Handles text input changes to show/hide send button
@@ -215,50 +313,80 @@ class _ChatScreenState extends State<ChatScreen> {
     final prefs = await SharedPreferences.getInstance();
     List<String> conversations = prefs.getStringList('conversations') ?? [];
 
-    if (conversations.contains(conversationName)) return; // Prevent duplicate conversations
+    String conversationEntry = '$conversationID:$conversationName';
 
-    conversations.add(conversationName);
+    // Prevent duplicate conversations
+    if (conversations.any((c) => c.startsWith('$conversationID:'))) return;
+
+    conversations.add(conversationEntry);
     await prefs.setStringList('conversations', conversations);
+  }
+
+  // Load conversation when navigating from history
+  void loadConversation(String conversationID, String conversationTitle) {
+    setState(() {
+      widget.conversationID = conversationID;
+      widget.conversationTitle = conversationTitle;
+      this.conversationID = conversationID;
+      this.conversationTitle = conversationTitle;
+      messages.clear();
+      suggestionsOpacity = 0.0;
+      additionalSuggestionsOpacity = 0.0;
+      logoOpacity = 0.0;
+      _suggestionsAnimationController.stop();
+      _additionalSuggestionsAnimationController.stop();
+    });
+    _loadPreviousMessages(conversationID);
+  }
+
+  // Update conversation title when edited from MenuScreen
+  void updateConversationTitle(String newTitle) {
+    setState(() {
+      conversationTitle = newTitle;
+    });
   }
 
   // Build method: creates UI elements for chat screen
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      appBar: _buildAppBar(context), // Build custom app bar
-      body: Stack(
-        children: [
-          Container(color: const Color(0xFF141414)), // Background color
-          _buildLogo(), // Show the logo
-          Column(
-            children: <Widget>[
-              Expanded(child: _buildMessagesList()), // Display the message list
-              _buildAdditionalSuggestionsBar(), // Display additional suggestions
-              _buildSuggestionsBar(), // Display main suggestions
-              _buildInputField(), // Display input field
-            ],
-          ),
-        ],
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: Scaffold(
+        resizeToAvoidBottomInset: true,
+        appBar: _buildAppBar(context), // Build custom app bar
+        body: Stack(
+          children: [
+            Container(color: const Color(0xFF141414)), // Background color
+            _buildLogo(), // Show the logo
+            Column(
+              children: <Widget>[
+                Expanded(child: _buildMessagesList()), // Display the message list
+                _buildAdditionalSuggestionsBar(), // Display additional suggestions
+                _buildSuggestionsBar(), // Display main suggestions
+                _buildInputField(), // Display input field
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  // Build AppBar with premium button and navigation to Account and Info
+// AppBar içinde ekran geçişlerini çağırırken yönü belirt
   AppBar _buildAppBar(BuildContext context) {
     return AppBar(
       toolbarHeight: 60,
       backgroundColor: const Color(0xFF141414),
       leading: IconButton(
         icon: const Icon(Icons.more_vert, color: Colors.white),
-        onPressed: () => _navigateToScreen(context, const InformationScreen(), const Offset(-1.0, 0.0)), // Left slide transition
+        onPressed: () => _navigateToScreen(context, InformationScreen(), isLeftToRight: true), // Soldan sağa
       ),
-      title: Center(child: _buildPremiumButton(context)), // Centered premium button
+      title: Center(child: _buildPremiumButton(context)), // Ortalanmış premium butonu
       actions: <Widget>[
         Padding(
           padding: const EdgeInsets.only(right: 5.0),
           child: GestureDetector(
-            onTap: () => _navigateToScreen(context, const AccountScreen(), const Offset(1.0, 0.0)), // Right slide transition
+            onTap: () => _navigateToScreen(context, AccountScreen(), isLeftToRight: false), // Sağdan sola
             child: Image.asset('assets/profile.png', height: 30, width: 36),
           ),
         ),
@@ -266,23 +394,29 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // Navigate to another screen with a slide transition
-  void _navigateToScreen(BuildContext context, Widget screen, Offset offset) {
+// Tek bir fonksiyonla ekran geçişi yapıp yönü belirle
+  void _navigateToScreen(BuildContext context, Widget screen, {required bool isLeftToRight}) {
     Navigator.push(
       context,
       PageRouteBuilder(
         pageBuilder: (_, animation, __) => screen,
-        transitionsBuilder: (_, animation, __, child) {
-          var offsetAnimation = animation.drive(
-            Tween(begin: offset, end: Offset.zero)
-                .chain(CurveTween(curve: Curves.easeInOut)),
+        transitionsBuilder: (_, animation, secondaryAnimation, child) {
+          Offset begin = isLeftToRight ? const Offset(-1.0, 0.0) : const Offset(1.0, 0.0);
+          const end = Offset.zero;
+          const curve = Curves.ease;
+
+          var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
           );
-          return SlideTransition(position: offsetAnimation, child: child);
         },
-        transitionDuration: const Duration(milliseconds: 200),
+        transitionDuration: const Duration(milliseconds: 300),
       ),
     );
   }
+
 
   // Build premium button in the AppBar
   Widget _buildPremiumButton(BuildContext context) {
@@ -300,23 +434,29 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // Navigate to the PremiumScreen
+  // Navigate to the PremiumScreen with fade transition
   void _navigateToPremiumScreen(BuildContext context) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => PremiumScreen()), // Default animation
+      PageRouteBuilder(
+        pageBuilder: (_, animation, __) => PremiumScreen(),
+        transitionsBuilder: (_, animation, __, child) {
+          return FadeTransition(
+            opacity: animation,
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 200),
+      ),
     );
   }
 
-  // Build the animated logo displayed at the top
+  // Modify the _buildLogo method to remove the Positioned widget since it's now inside a Stack
   Widget _buildLogo() {
-    return Positioned(
-      top: 0,
-      left: 0,
-      right: 0,
+    return Center(
       child: AnimatedOpacity(
         opacity: logoOpacity,
-        duration: const Duration(milliseconds: 400),
+        duration: const Duration(milliseconds: 200), // Reduced duration
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 160),
           child: Column(
@@ -341,49 +481,91 @@ class _ChatScreenState extends State<ChatScreen> {
   // Build the list of messages
   Widget _buildMessagesList() {
     return ListView.builder(
-      itemCount: messages.length + (modelResponses.isNotEmpty ? 1 : 0),
+      controller: _scrollController,
+      padding: const EdgeInsets.all(8.0),
+      itemCount: messages.length,
       itemBuilder: (context, index) {
-        if (index == messages.length && modelResponses.isNotEmpty) {
-          return _buildModelResponse(); // Display model response
-        } else {
-          return _buildMessageTile(messages[index]); // Display regular message
-        }
+        return _buildMessageTile(messages[index]); // Display regular message
       },
     );
   }
 
-  // Build a single message tile
+  // Build a single message tile with long-press copy functionality
   Widget _buildMessageTile(Message message) {
-    return ListTile(
-      title: Align(
-        alignment: message.isUserMessage ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: message.isUserMessage ? const Color(0xFF292a2c) : const Color(0xFF00b7bdc9),
-            borderRadius: BorderRadius.circular(10),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: GestureDetector(
+        onLongPressStart: (details) {
+          _showMessageOptions(context, details.globalPosition, message);
+        },
+        child: Align(
+          alignment: message.isUserMessage ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.7),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: message.isUserMessage ? const Color(0xFF292a2c) : const Color(0xFFdadee6),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              message.text,
+              style: TextStyle(
+                color: message.isUserMessage ? Colors.white : Colors.black,
+                fontSize: 16,
+              ),
+            ),
           ),
-          child: Text(message.text, style: const TextStyle(color: Colors.white)),
         ),
       ),
     );
   }
 
-// Display the ongoing model response in the chat
-  Widget _buildModelResponse() {
-    return ListTile(
-      title: Align(
-        alignment: Alignment.centerLeft,
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: const Color(0xFFdadee6), // Modelin yanıt baloncuğu
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Text(modelResponses.join(" "), style: const TextStyle(color: Colors.black)),
-        ),
+  // Method to show message options (Copy)
+  void _showMessageOptions(BuildContext context, Offset tapPosition, Message message) async {
+    final RenderBox overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+
+    await showMenu(
+      context: context,
+      position: RelativeRect.fromRect(
+        tapPosition & const Size(40, 40), // Menü pozisyonu
+        Offset.zero & overlay.size, // Overlay boyutu
       ),
-    );
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12.0), // Köşeleri yuvarla
+      ),
+      items: [
+        PopupMenuItem<String>(
+          value: 'copy',
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF202020), // Arka plan rengini değiştir
+              borderRadius: BorderRadius.circular(8.0), // Köşeleri yuvarla
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: Row(
+              children: const [
+                Icon(Icons.copy, color: Colors.white), // Kopyalama ikonu
+                SizedBox(width: 10), // İkon ve metin arasında boşluk
+                Text(
+                  'Kopyala',
+                  style: TextStyle(color: Colors.white), // Metin rengi beyaz
+                ),
+              ],
+            ),
+          ),
+        ),
+        // Gelecekte daha fazla seçenek eklemek isterseniz, buraya ekleyebilirsiniz
+      ],
+      elevation: 0.0, // Gölgeyi kaldır
+      color: Colors.transparent, // Menü arka planını şeffaf yap
+    ).then((value) {
+      if (value == 'copy') {
+        Clipboard.setData(ClipboardData(text: message.text));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Mesaj panoya kopyalandı')),
+        );
+      }
+    });
   }
 
 
@@ -391,10 +573,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildAdditionalSuggestionsBar() {
     return AnimatedOpacity(
       opacity: additionalSuggestionsOpacity,
-      duration: const Duration(milliseconds: 400),
+      duration: const Duration(milliseconds: 200), // Reduced duration
       child: additionalSuggestionsOpacity > 0.0
-          ? _buildSuggestionsRow(additionalSuggestions)
-          : Container(),
+          ? _buildSuggestionsRow(additionalSuggestions, _additionalSuggestionsScrollController, isTopPanel: true)
+          : const SizedBox.shrink(),
     );
   }
 
@@ -402,19 +584,30 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildSuggestionsBar() {
     return AnimatedOpacity(
       opacity: suggestionsOpacity,
-      duration: const Duration(milliseconds: 400),
-      child: suggestionsOpacity > 0.0 ? _buildSuggestionsRow(suggestions) : Container(),
+      duration: const Duration(milliseconds: 200), // Reduced duration
+      child: suggestionsOpacity > 0.0
+          ? _buildSuggestionsRow(suggestions, _suggestionsScrollController)
+          : const SizedBox.shrink(),
     );
   }
 
-  // Build a row of suggestion buttons
-  Widget _buildSuggestionsRow(List<String> suggestions) {
+  // Build a row of suggestion buttons with enhanced gesture detection
+  Widget _buildSuggestionsRow(List<String> suggestions, ScrollController scrollController,
+      {bool isTopPanel = false}) {
     return SizedBox(
       height: 50,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: suggestions.map(_buildSuggestionButton).toList(),
+      child: NotificationListener<UserScrollNotification>(
+        onNotification: (notification) {
+          // Pause animations when user interacts with the panel
+          _pauseAnimations();
+          return true;
+        },
+        child: SingleChildScrollView(
+          controller: scrollController,
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: suggestions.map(_buildSuggestionButton).toList(),
+          ),
         ),
       ),
     );
@@ -481,11 +674,46 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // Scroll to the bottom of the ListView
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  // Pause both suggestion animations
+  void _pauseAnimations() {
+    if (_suggestionsAnimationController.isAnimating) {
+      _suggestionsAnimationController.stop();
+    }
+    if (_additionalSuggestionsAnimationController.isAnimating) {
+      _additionalSuggestionsAnimationController.stop();
+    }
+    setState(() {
+      suggestionsOpacity = 1.0; // Optionally, you can adjust opacity if needed
+      additionalSuggestionsOpacity = 1.0; // Optionally, you can adjust opacity if needed
+    });
+  }
+
   @override
   void dispose() {
     _controller.dispose(); // Dispose of the input controller
     responseTimer?.cancel(); // Cancel the response timer
     _scrollController.dispose(); // Dispose of the scroll controller
+
+    _suggestionsAnimationController.dispose();
+    _additionalSuggestionsAnimationController.dispose();
+    _suggestionsScrollController.dispose();
+    _additionalSuggestionsScrollController.dispose();
+
+    _fadeAnimationController.dispose(); // Dispose of the fade animation controller
+
     super.dispose();
   }
 }

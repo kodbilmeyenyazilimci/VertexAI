@@ -1,0 +1,104 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"install"
+		],
+		"files" : 
+		[
+			"C:/Users/Dell/AndroidStudioProjects/llama.cpp/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 158,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 173,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 177,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 193,
+				"parent" : 0
+			}
+		]
+	},
+	"installers" : 
+	[
+		{
+			"backtrace" : 1,
+			"component" : "Unspecified",
+			"destination" : "lib",
+			"paths" : 
+			[
+				"C:/Users/Dell/AndroidStudioProjects/ai/build/llama/intermediates/cxx/Release/2sp4x3k6/obj/x86_64/libllama.so"
+			],
+			"targetId" : "llama::@a28f7d715364b5d9b6c0",
+			"targetIndex" : 4,
+			"type" : "target"
+		},
+		{
+			"backtrace" : 1,
+			"component" : "Unspecified",
+			"destination" : "include",
+			"paths" : 
+			[
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/include/llama.h"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 2,
+			"component" : "Unspecified",
+			"destination" : "lib/cmake/llama",
+			"paths" : 
+			[
+				"C:/Users/Dell/AndroidStudioProjects/ai/android/llama/.cxx/Release/2sp4x3k6/x86_64/llama_build/llama-config.cmake",
+				"C:/Users/Dell/AndroidStudioProjects/ai/android/llama/.cxx/Release/2sp4x3k6/x86_64/llama_build/llama-version.cmake"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 3,
+			"component" : "Unspecified",
+			"destination" : "bin",
+			"paths" : 
+			[
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/convert_hf_to_gguf.py"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 4,
+			"component" : "Unspecified",
+			"destination" : "lib/pkgconfig",
+			"paths" : 
+			[
+				"C:/Users/Dell/AndroidStudioProjects/ai/android/llama/.cxx/Release/2sp4x3k6/x86_64/llama_build/llama.pc"
+			],
+			"type" : "file"
+		}
+	],
+	"paths" : 
+	{
+		"build" : "llama_build",
+		"source" : "C:/Users/Dell/AndroidStudioProjects/llama.cpp"
+	}
+}

@@ -5,6 +5,11 @@ import 'models.dart';
 import 'download.dart';
 import 'menu.dart';
 
+// Export the mainScreenKey so it can be accessed from other files
+export 'main.dart' show mainScreenKey;
+
+final GlobalKey<MainScreenState> mainScreenKey = GlobalKey<MainScreenState>();
+
 Future<void> requestStoragePermission() async {
   if (await Permission.manageExternalStorage.request().isGranted) {
     print('Genişletilmiş depolama izni verildi');
@@ -28,8 +33,7 @@ class ChatApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       theme: ThemeData(
-
-        primaryColor: Colors.white, // Set primary color to white
+        primaryColor: Colors.white,
         scaffoldBackgroundColor: Colors.black,
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.black,
@@ -43,34 +47,76 @@ class ChatApp extends StatelessWidget {
           border: OutlineInputBorder(),
         ),
       ),
-      home: const MainScreen(), // Ana ekran
+      // Use the GlobalKey when creating the MainScreen
+      home: MainScreen(key: mainScreenKey),
     );
   }
 }
-
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
 
   @override
-  _MainScreenState createState() => _MainScreenState();
+  MainScreenState createState() => MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class MainScreenState extends State<MainScreen> with SingleTickerProviderStateMixin {
   int _selectedIndex = 0;
 
-  final List<Widget> _screens = [
-    const ChatScreen(), // Chat ekranı
-    const ModelsScreen(), // Ayarlar ekranı
-    const MenuScreen(), // Menü ekranı
-  ];
+  // Use GlobalKey to access ChatScreenState and MenuScreenState
+  final GlobalKey<ChatScreenState> chatScreenKey = GlobalKey<ChatScreenState>();
+  final GlobalKey<MenuScreenState> menuScreenKey = GlobalKey<MenuScreenState>();
 
-  void _onItemTapped(int index) {
-    if (index != _selectedIndex) {
+  late final List<Widget> _screens;
+  late final AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _screens = [
+      ChatScreen(key: chatScreenKey),
+      const ModelsScreen(),
+      MenuScreen(key: menuScreenKey),
+    ];
+
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+
+    _fadeAnimation = CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeInOut,
+    );
+
+    _animationController.forward();
+  }
+
+  // Method to switch to ChatScreen and load a conversation
+  void openConversation(String conversationID, String conversationTitle) {
+    _animateScreenTransition(0); // Always animate transition to ChatScreen
+    chatScreenKey.currentState?.loadConversation(conversationID, conversationTitle);
+  }
+
+  // Method to start a new conversation
+  void startNewConversation() {
+    _animateScreenTransition(0); // Always animate transition to ChatScreen
+    chatScreenKey.currentState?.resetConversation();
+  }
+
+  // Make the onItemTapped method public
+  void onItemTapped(int index) {
+    _animateScreenTransition(index);
+  }
+
+  void _animateScreenTransition(int newIndex) {
+    _animationController.reverse().then((_) {
       setState(() {
-        _selectedIndex = index; // Seçili ekranı güncelle
+        _selectedIndex = newIndex;
       });
-    }
+      _animationController.forward();
+    });
   }
 
   Widget _buildIconButton(IconData icon, int index) {
@@ -86,16 +132,24 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   @override
+  void dispose() {
+    _animationController.dispose(); // Dispose the animation controller
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () {
-        // Dismiss the SnackBar when tapping anywhere on the screen
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
       },
       child: Scaffold(
-        body: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200), // Geçiş süresi
-          child: _screens[_selectedIndex], // Seçili ekran
+        body: FadeTransition(
+          opacity: _fadeAnimation,
+          child: IndexedStack(
+            index: _selectedIndex,
+            children: _screens,
+          ),
         ),
         bottomNavigationBar: BottomAppBar(
           color: const Color(0xFF141414),
@@ -105,22 +159,22 @@ class _MainScreenState extends State<MainScreen> {
               IconButton(
                 icon: _buildIconButton(Icons.menu, 2),
                 onPressed: () {
-                  _onItemTapped(2); // Menü ekranı
-                  ScaffoldMessenger.of(context).hideCurrentSnackBar(); // Dismiss SnackBar
+                  onItemTapped(2);
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
                 },
               ),
               IconButton(
                 icon: _buildIconButton(Icons.chat_bubble, 0),
                 onPressed: () {
-                  _onItemTapped(0); // Chat ekranı
-                  ScaffoldMessenger.of(context).hideCurrentSnackBar(); // Dismiss SnackBar
+                  onItemTapped(0);
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
                 },
               ),
               IconButton(
                 icon: _buildIconButton(Icons.ac_unit, 1),
                 onPressed: () {
-                  _onItemTapped(1); // Ayarlar ekranı
-                  ScaffoldMessenger.of(context).hideCurrentSnackBar(); // Dismiss SnackBar
+                  onItemTapped(1);
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
                 },
               ),
             ],

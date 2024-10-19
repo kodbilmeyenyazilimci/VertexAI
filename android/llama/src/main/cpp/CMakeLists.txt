@@ -32,7 +32,7 @@ project("ai")
 #
 
 #load local llama.cpp
-add_subdirectory(../../../../../../../ build-llama)
+add_subdirectory(C:/Users/Dell/AndroidStudioProjects/llama.cpp llama_build)
 
 # In order to load a library into your app from Java/Kotlin, you must call
 # System.loadLibrary() and pass the name of the library defined here;

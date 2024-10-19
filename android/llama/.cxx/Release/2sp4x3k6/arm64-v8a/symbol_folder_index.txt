@@ -1,0 +1,1 @@
+C:\Users\Dell\AndroidStudioProjects\ai\build\llama\intermediates\cxx\Release\2sp4x3k6\obj\arm64-v8a

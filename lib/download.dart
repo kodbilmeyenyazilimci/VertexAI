@@ -14,7 +14,7 @@ class FileDownloadHelper extends ChangeNotifier {
     required String title,
     required Function(String, double) onProgress,
     required Function(String) onDownloadCompleted,
-    required Function(String) onDownloadError,
+    required Function(String) onDownloadError, required String filePath,
   }) async {
     final permissionStatus = await Permission.manageExternalStorage.request();
 

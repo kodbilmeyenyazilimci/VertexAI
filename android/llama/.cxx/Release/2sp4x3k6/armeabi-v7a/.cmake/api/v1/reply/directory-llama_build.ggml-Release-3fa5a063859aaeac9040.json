@@ -1,0 +1,105 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"install"
+		],
+		"files" : 
+		[
+			"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 233,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 236,
+				"parent" : 0
+			}
+		]
+	},
+	"installers" : 
+	[
+		{
+			"backtrace" : 1,
+			"component" : "Unspecified",
+			"destination" : "lib",
+			"paths" : 
+			[
+				"C:/Users/Dell/AndroidStudioProjects/ai/build/llama/intermediates/cxx/Release/2sp4x3k6/obj/armeabi-v7a/libggml.so"
+			],
+			"targetId" : "ggml::@ac82e33bde8b2dde67df",
+			"targetIndex" : 3,
+			"type" : "target"
+		},
+		{
+			"backtrace" : 1,
+			"component" : "Unspecified",
+			"destination" : "include",
+			"paths" : 
+			[
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-alloc.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-backend.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-blas.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-cann.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-cuda.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-kompute.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-metal.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-rpc.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-sycl.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-vulkan.h"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 2,
+			"component" : "Unspecified",
+			"destination" : "lib",
+			"paths" : 
+			[
+				"C:/Users/Dell/AndroidStudioProjects/ai/build/llama/intermediates/cxx/Release/2sp4x3k6/obj/armeabi-v7a/libggml.so"
+			],
+			"targetId" : "ggml::@ac82e33bde8b2dde67df",
+			"targetIndex" : 3,
+			"type" : "target"
+		},
+		{
+			"backtrace" : 2,
+			"component" : "Unspecified",
+			"destination" : "include",
+			"paths" : 
+			[
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-alloc.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-backend.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-blas.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-cann.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-cuda.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-kompute.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-metal.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-rpc.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-sycl.h",
+				"C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/include/ggml-vulkan.h"
+			],
+			"type" : "file"
+		}
+	],
+	"paths" : 
+	{
+		"build" : "llama_build/ggml",
+		"source" : "C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml"
+	}
+}
