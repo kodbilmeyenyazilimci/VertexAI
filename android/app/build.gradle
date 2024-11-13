@@ -3,11 +3,12 @@ plugins {
     id "kotlin-android"
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id "dev.flutter.flutter-gradle-plugin"
+    id 'com.google.gms.google-services'
 }
 
 android {
     namespace = "com.vertex.ai"
-    compileSdk = 34
+    compileSdkVersion = 34
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -30,7 +31,7 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 26
         targetSdk = 34
-        versionCode = 9
+        versionCode = 17
         versionName = flutter.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -38,10 +39,20 @@ android {
         }
     }
 
+    signingConfigs {
+        release {
+            storeFile file("C:/Users/Dell/Desktop/ai.jks") // Anahtar dosyanızın yolu
+            storePassword "123456789@Aa112112"   // Anahtar dosyası şifresi
+            keyAlias "ai"                // Anahtar takma adı
+            keyPassword "123456789@Aa112112"        // Anahtar şifresi
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled true   // Enable code shrinking
             shrinkResources true // Enable resource shrinking
+            signingConfig signingConfigs.release
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -82,5 +93,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    implementation platform('com.google.firebase:firebase-bom:33.5.1')
+    implementation 'com.google.firebase:firebase-analytics'
 }
 

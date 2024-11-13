@@ -1,12 +1,26 @@
+// models.dart
 import 'dart:io';
-
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter_downloader/flutter_downloader.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:provider/provider.dart';
+import 'model.dart';
+import 'theme.dart';
+import 'data.dart';
 import 'download.dart';
 import 'main.dart';
 import 'system_info.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as path;
+
+enum CompatibilityStatus {
+  compatible,
+  insufficientRAM,
+  insufficientStorage,
+}
 
 class ModelsScreen extends StatefulWidget {
   const ModelsScreen({super.key});
@@ -15,56 +29,35 @@ class ModelsScreen extends StatefulWidget {
   _ModelsScreenState createState() => _ModelsScreenState();
 }
 
-class _ModelsScreenState extends State<ModelsScreen> with TickerProviderStateMixin {
-  late AnimationController _fadeController;
-  late Animation<double> _fadeAnimation;
+class DownloadedModelsManager {
+  static final DownloadedModelsManager _instance =
+  DownloadedModelsManager._internal();
+  factory DownloadedModelsManager() => _instance;
+  DownloadedModelsManager._internal();
+
+  List<DownloadedModel> downloadedModels = [];
+}
+
+class DownloadedModel {
+  final String name;
+  final String image;
+
+  DownloadedModel({required this.name, required this.image});
+}
+
+class _ModelsScreenState extends State<ModelsScreen>
+    with TickerProviderStateMixin {
+  late AnimationController _rotationController;
   late Map<String, bool> _downloadStates;
   late Map<String, bool> _isDownloading;
-  SystemInfoData? _systemInfo; // Nullable to handle initialization
-  String? _selectedModelTitle; // Selected model title
+  late Map<String, bool> _isPaused;
+  late Map<String, String> _downloadTaskIds;
+  SystemInfoData? _systemInfo;
+  String? _selectedModelTitle;
+  final downloadedModelsManager = DownloadedModelsManager();
 
-  final List<Map<String, String>> _models = [
-    {
-      'title': 'TinyLlama',
-      'description':
-      "TinyLlama, 1.1 milyar parametreye sahip ve Llama 2'nin mimarisini kullanan bir dil modelidir. 4-bit kuantize edilmiştir ve daha düşük hesaplama gücü ile yüksek performans sunar.",
-      'url':
-      'https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q8_0.gguf?download=true',
-      'size': '1.1 GB'
-    },
-    {
-      'title': 'Phi-2-Instruct-v1',
-      'description':
-      "Phi 2 Instruct-v1, yüksek performanslı ve küçük boyutlu bir AI modelidir. Model, 4-bit kuantize edilerek daha verimli bir şekilde çalışması sağlanmıştır.",
-      'url':
-      'https://huggingface.co/timothyckl/phi-2-instruct-v1/resolve/23d6e417677bc32b1fb4947615acbb616556142a/ggml-model-q4km.gguf',
-      'size': '1.6 GB'
-    },
-    {
-      'title': 'Mistral-7B-Turkish',
-      'description':
-      "Mistral 7B Instruct v0.2 Turkish, yüksek performans ve verimlilik sunan bir yapay zeka modelidir. 5-bit kuantizasyon teknolojisi ile optimize edilmiş olup, 7 milyar parametreye sahiptir. Türkçe dilinde etkili bir şekilde görev alabilir.",
-      'url':
-      'https://huggingface.co/sayhan/Mistral-7B-Instruct-v0.2-turkish-GGUF/resolve/main/mistral-7b-instruct-v0.2-turkish.Q5_K_M.gguf?download=true',
-      'size': '4.8 GB'
-    },
-    {
-      'title': 'Gemma',
-      'description':
-      "Gemma 1.1, yüksek performanslı ve kompakt bir AI modelidir. 4-bit kuantizasyon teknolojisi ile optimize edilmiştir ve 7 milyar parametreye sahiptir.",
-      'url':
-      'https://huggingface.co/ggml-org/gemma-1.1-7b-it-Q4_K_M-GGUF/resolve/main/gemma-1.1-7b-it.Q4_K_M.gguf?download=true',
-      'size': '5.0 GB'
-    },
-    {
-      'title': 'GPT Neo X',
-      'description':
-      "GPT Neo X, büyük ölçekli bir dil modelidir ve 20 milyar parametreye sahiptir. 4-bit kuantize edilerek yüksek performans ve düşük bellek kullanımı sunar.",
-      'url':
-      'https://huggingface.co/zhentaoyu/gpt-neox-20b-Q4_0-GGUF/resolve/main/gpt-neox-20b-q4_0.gguf',
-      'size': '10.9 GB'
-    },
-  ];
+  late List<Map<String, dynamic>> _models;
+  List<Map<String, dynamic>> _myModels = [];
 
   late String _filesDirectoryPath;
 
@@ -72,132 +65,166 @@ class _ModelsScreenState extends State<ModelsScreen> with TickerProviderStateMix
   void initState() {
     super.initState();
 
-    // Initialize _downloadStates and _isDownloading
     _downloadStates = {};
     _isDownloading = {};
+    _isPaused = {};
+    _downloadTaskIds = {};
 
-    // Initialize values through _models
-    for (var model in _models) {
-      _downloadStates[model['title']!] = false;
-      _isDownloading[model['title']!] = false;
-    }
+    _rotationController = AnimationController(
+      duration: const Duration(seconds: 2),
+      vsync: this,
+    )..repeat();
 
     _initializeDirectory().then((_) {
+      _loadSystemInfo();
+      _loadSelectedModel();
+      _initializeDownloadedModels();
       _checkDownloadStates();
       _checkDownloadingStates();
 
-      // Check if downloaded files actually exist
       for (var model in _models) {
-        _checkFileExists(model['title']!);
+        if (!(model['isServerSide'] ?? false)) {
+          _checkFileExists(model['title']);
+        }
       }
+
+      _initializeMyModels();
     });
-
-    _fadeController = AnimationController(
-      duration: const Duration(seconds: 2),
-      vsync: this,
-    )..repeat(reverse: true);
-
-    _fadeAnimation = Tween<double>(begin: 1.0, end: 0.6).animate(_fadeController);
-
-    _loadSystemInfo();
-
-    // Load selected model from SharedPreferences
-    _loadSelectedModel();
-
-    // Request storage permissions
-    _requestPermissions();
   }
 
-  /// Requests storage permissions using permission_handler package.
-  Future<void> _requestPermissions() async {
-    var status = await Permission.storage.status;
-    if (!status.isGranted) {
-      await Permission.storage.request();
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    final localizations = AppLocalizations.of(context)!;
+
+    _models = ModelData.models(context);
+
+    for (var model in _models) {
+      if (!(model['isServerSide'] ?? false)) {
+        _downloadStates[model['title']] = false;
+        _isDownloading[model['title']] = false;
+        _isPaused[model['title']] = false;
+      }
     }
   }
 
-  /// Initializes the directory path using path_provider.
+  @override
+  void dispose() {
+    _rotationController.dispose();
+    super.dispose();
+  }
+
   Future<void> _initializeDirectory() async {
-    Directory? externalDir = await getExternalStorageDirectory();
-    if (externalDir != null) {
-      _filesDirectoryPath = externalDir.path; // e.g., /storage/emulated/0/Android/data/com.vertex.ai/files
-    } else {
-      // Fallback to internal directory if external storage is not available
-      Directory appDocDir = await getApplicationDocumentsDirectory();
-      _filesDirectoryPath = appDocDir.path;
-    }
+    // Use the application's documents directory
+    Directory appDocDir = await getApplicationDocumentsDirectory();
+    _filesDirectoryPath = appDocDir.path;
     print("Files will be stored in: $_filesDirectoryPath");
   }
 
-  /// Loads system information asynchronously.
+  Future<void> _initializeMyModels() async {
+    Directory dir = Directory(_filesDirectoryPath);
+    List<FileSystemEntity> files = await dir.list().toList();
+    List<File> ggufFiles = files
+        .whereType<File>()
+        .where((file) => file.path.endsWith('.gguf'))
+        .toList();
+
+    List<String> predefinedModelPaths =
+    _models.map((model) => _getFilePath(model['title'])).toList();
+
+    setState(() {
+      _myModels = ggufFiles
+          .where((file) => !predefinedModelPaths.contains(file.path))
+          .map((file) {
+        String fileName = path.basename(file.path);
+        return {
+          'title': path.basenameWithoutExtension(fileName),
+          'description': AppLocalizations.of(context)!.myModelDescription,
+          'size': '', // Calculate file size if necessary
+          'image': 'assets/customai.png',
+          'path': file.path,
+        };
+      }).toList();
+    });
+  }
+
   Future<void> _loadSystemInfo() async {
     try {
       final systemInfo = await SystemInfoProvider.fetchSystemInfo();
-      setState(() {
-        _systemInfo = systemInfo;
-      });
+      if (mounted) {
+        setState(() {
+          _systemInfo = systemInfo;
+        });
+      }
     } catch (e) {
       print('Error fetching system info: $e');
-      // Handle the error as needed
     }
   }
 
-  /// Loads the selected model from SharedPreferences.
   Future<void> _loadSelectedModel() async {
     final prefs = await SharedPreferences.getInstance();
     String? selectedModelTitle = prefs.getString('selected_model_title');
     String? selectedModelPath = prefs.getString('selected_model_path');
 
     if (selectedModelTitle != null && selectedModelPath != null) {
-      setState(() {
-        _selectedModelTitle = selectedModelTitle;
-      });
+      if (mounted) {
+        setState(() {
+          _selectedModelTitle = selectedModelTitle;
+        });
+      }
     }
   }
 
-  /// Determines the text to display on the download button based on system info and model state.
-  String _getDownloadButtonText(String title, String size) {
+  void _initializeDownloadedModels() {
+    downloadedModelsManager.downloadedModels.clear();
+    for (var model in _models) {
+      String title = model['title'];
+      if ((_downloadStates[title] == true) ||
+          (model['isServerSide'] ?? false)) {
+        downloadedModelsManager.downloadedModels.add(DownloadedModel(
+          name: title,
+          image: model['image'],
+        ));
+      }
+    }
+  }
+
+  CompatibilityStatus _getCompatibilityStatus(String title, String size) {
     if (_systemInfo == null) {
-      return 'Az bekle'; // "Wait" in Turkish
+      return CompatibilityStatus.insufficientRAM;
     }
 
     final int requiredSizeMB = _parseSizeToMB(size);
     final int ramGB = (_systemInfo!.deviceMemory / 1024).floor();
     final bool isRAMSufficient;
-    final bool isStorageSufficient = _systemInfo!.freeStorage >= requiredSizeMB;
+    final bool isStorageSufficient =
+        (_systemInfo!.freeStorage / 1024) >= (requiredSizeMB / 1024);
 
-    // Check RAM requirements
     if (ramGB <= 3) {
       isRAMSufficient = title == 'TinyLlama';
     } else if (ramGB <= 4) {
-      isRAMSufficient = title == 'TinyLlama' || title == 'Phi-2-Instruct-v1';
+      isRAMSufficient =
+          title == 'TinyLlama' || title == 'Phi-2-Instruct-v1';
     } else if (ramGB < 8) {
       isRAMSufficient = title == 'TinyLlama' ||
           title == 'Phi-2-Instruct-v1' ||
           title == 'Mistral-7B-Turkish' ||
           title == 'Gemma';
     } else {
-      isRAMSufficient = true; // All models for >= 8 GB RAM
+      isRAMSufficient = true;
     }
 
-    final isDownloaded = _downloadStates[title] ?? false;
-
-    if (!isRAMSufficient) {
-      return 'Yetersiz bellek'; // "Insufficient memory"
-    }
-
-    if (!isStorageSufficient) {
-      return 'Yetersiz Depolama alanı'; // "Insufficient storage"
-    }
-
-    return isDownloaded ? 'Kaldır' : 'İndir'; // "Remove" or "Download"
+    if (!isRAMSufficient) return CompatibilityStatus.insufficientRAM;
+    if (!isStorageSufficient) return CompatibilityStatus.insufficientStorage;
+    return CompatibilityStatus.compatible;
   }
 
-  /// Parses the size string to MB.
   int _parseSizeToMB(String size) {
     final sizeParts = size.split(' ');
     if (sizeParts.length < 2) return 0;
-    final sizeValue = double.tryParse(sizeParts[0].replaceAll(',', '')) ?? 0.0;
+    final sizeValue =
+        double.tryParse(sizeParts[0].replaceAll(',', '')) ?? 0.0;
     final unit = sizeParts[1].toUpperCase();
 
     switch (unit) {
@@ -210,160 +237,650 @@ class _ModelsScreenState extends State<ModelsScreen> with TickerProviderStateMix
     }
   }
 
-  /// Constructs the full file path for a given model title.
   String _getFilePath(String title) {
-    // Append '.ggf' extension to the title
-    String sanitizedTitle = title.replaceAll(' ', '_'); // Replace spaces with underscores if necessary
-    return '/storage/emulated/0/Download/$_filesDirectoryPath/${sanitizedTitle}.gguf';
+    String sanitizedTitle =
+    title.replaceAll(' ', '_'); // Replace spaces with underscores
+    return path.join(_filesDirectoryPath, '$sanitizedTitle.gguf');
   }
 
-  /// Builds each model tile in the list.
-  Widget _buildModelTile(String title, String description, String url, String size) {
-    final isDownloaded = _downloadStates[title] ?? false;
+  Widget _buildModelTile(
+      String title,
+      String description,
+      String? url,
+      String? size,
+      String imagePath,
+      String? requirements,
+      String producer,
+      bool isServerSide,
+      bool isDarkTheme, {
+        bool isCustomModel = false,
+        String? modelPath,
+      }) {
+    final isDownloaded =
+    isCustomModel ? true : (_downloadStates[title] ?? false);
     final isDownloading = _isDownloading[title] ?? false;
-    final buttonText = _getDownloadButtonText(title, size);
-    final bool isDisabled = buttonText != 'İndir'; // Disable button if not "Download"
-    final isSelected = _selectedModelTitle == title;
+    final isPaused = _isPaused[title] ?? false;
+    final compatibilityStatus = isServerSide
+        ? CompatibilityStatus.compatible
+        : isCustomModel
+        ? CompatibilityStatus.compatible
+        : _getCompatibilityStatus(title, size!);
 
     return GestureDetector(
-      onTap: isDownloaded
-          ? () => _selectModel(
+      onTap: () => _openModelDetail(
         title,
-      )
-          : null, // If not downloaded, cannot select
-      child: FadeTransition(
-        opacity: isDownloading ? _fadeAnimation : const AlwaysStoppedAnimation(1.0),
-        child: AnimatedContainer(
-          duration: const Duration(seconds: 1),
-          margin: const EdgeInsets.only(bottom: 16.0),
-          padding: const EdgeInsets.all(16.0),
-          decoration: BoxDecoration(
-            color: Colors.grey[800],
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isSelected ? Colors.white.withOpacity(0.5) : Colors.transparent,
-              width: 2,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.4),
-                spreadRadius: 1,
-                blurRadius: 6,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                description,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.7),
-                  fontSize: 14,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  if (isDownloaded)
-                    ElevatedButton(
-                      onPressed: () => _removeModel(title), // Pass only title
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red, // Red color for remove
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: const Text(
-                        'Kaldır', // "Remove" in Turkish
-                        style: TextStyle(color: Colors.white),
-                      ),
-                    )
-                  else
-                    ElevatedButton(
-                      onPressed: isDownloading || isDisabled ? null : () => _downloadModel(url, title),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: isDownloading
-                            ? Colors.grey
-                            : isDisabled
-                            ? Colors.black
-                            : Colors.purple[400],
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: Text(
-                        isDownloading ? 'İndiriliyor...' : buttonText, // "Downloading..."
-                        style: const TextStyle(color: Colors.white),
-                      ),
+        description,
+        imagePath,
+        size ?? '',
+        requirements ?? '',
+        producer,
+        isServerSide,
+        isDownloaded,
+        isDownloading,
+        compatibilityStatus,
+        url,
+        isCustomModel: isCustomModel,
+        modelPath: modelPath,
+      ),
+      child: AnimatedBuilder(
+        animation: _rotationController,
+        builder: (context, child) {
+          return Container(
+            margin: const EdgeInsets.only(bottom: 16.0),
+            child: Stack(
+              children: [
+                AnimatedContainer(
+                  duration: const Duration(seconds: 1),
+                  padding: const EdgeInsets.all(16.0),
+                  decoration: BoxDecoration(
+                    color: isDarkTheme ? Colors.grey[900] : Colors.grey[200],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: isServerSide || isDownloaded
+                          ? isDarkTheme
+                          ? Colors.white
+                          : Colors.black
+                          : Colors.transparent,
+                      width: 2,
                     ),
-                  Row(
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.storage, color: Colors.grey[400]),
-                      const SizedBox(width: 4),
-                      Text(
-                        size,
-                        style: TextStyle(
-                          color: Colors.grey[400],
-                        ),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              color: isDarkTheme
+                                  ? Colors.black54
+                                  : Colors.grey[300],
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.asset(
+                                imagePath,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Center(
+                                    child: Icon(
+                                      Icons.broken_image,
+                                      color: isDarkTheme
+                                          ? Colors.white
+                                          : Colors.black,
+                                      size: 40,
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  title,
+                                  style: TextStyle(
+                                    color: isDarkTheme
+                                        ? Colors.white
+                                        : Colors.black,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  description,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: isDarkTheme
+                                        ? Colors.white.withOpacity(0.85)
+                                        : Colors.black87,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
+                      const SizedBox(height: 16),
+                      if (isServerSide)
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: () =>
+                                _startChatWithModel(title, isServerSide),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor:
+                              isDarkTheme ? Colors.blueAccent : Colors.blue,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 12, horizontal: 8),
+                            ),
+                            child: FittedBox(
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.chat_bubble_rounded,
+                                    color: Colors.white,
+                                    size: 16,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    AppLocalizations.of(context)!.chat,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        )
+                      else if (isCustomModel)
+                        SizedBox(
+                          width: double.infinity,
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: () => _removeModel(title,
+                                      isCustomModel: true, modelPath: modelPath),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor:
+                                    Colors.redAccent, // Red background
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12),
+                                  ),
+                                  child: FittedBox(
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      mainAxisAlignment:
+                                      MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.delete,
+                                          color: Colors.white,
+                                          size: 16,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          AppLocalizations.of(context)!.remove,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: () => _startChatWithModel(
+                                      title, isServerSide,
+                                      isCustomModel: true,
+                                      modelPath: modelPath),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: isDarkTheme
+                                        ? Colors.blueAccent
+                                        : Colors.blue,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12, horizontal: 8),
+                                  ),
+                                  child: FittedBox(
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      mainAxisAlignment:
+                                      MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.chat_bubble_rounded,
+                                          color: Colors.white,
+                                          size: 16,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          AppLocalizations.of(context)!.chat,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else if (isDownloading)
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: () => _cancelDownload(title),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.redAccent,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 12, horizontal: 8),
+                              ),
+                              child: FittedBox(
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.cancel,
+                                      color: Colors.white,
+                                      size: 16,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      AppLocalizations.of(context)!
+                                          .cancelDownload,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          )
+                        else if (isPaused)
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: () => _resumeDownload(title),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: isDarkTheme
+                                      ? Colors.blueAccent
+                                      : Colors.blue,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 12, horizontal: 8),
+                                ),
+                                child: FittedBox(
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.play_arrow,
+                                        color: Colors.white,
+                                        size: 16,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        AppLocalizations.of(context)!.resume,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            )
+                          else if (!isDownloaded)
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed: compatibilityStatus !=
+                                      CompatibilityStatus.compatible
+                                      ? null
+                                      : () => _downloadModel(url, title),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: compatibilityStatus !=
+                                        CompatibilityStatus.compatible
+                                        ? Colors.grey
+                                        : isDarkTheme
+                                        ? Colors.white
+                                        : Colors.black,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12, horizontal: 8),
+                                  ),
+                                  child: FittedBox(
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.download,
+                                          color: compatibilityStatus !=
+                                              CompatibilityStatus.compatible
+                                              ? Colors.white
+                                              : isDarkTheme
+                                              ? Colors.black
+                                              : Colors.white,
+                                          size: 16,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          compatibilityStatus ==
+                                              CompatibilityStatus
+                                                  .insufficientRAM
+                                              ? AppLocalizations.of(context)!
+                                              .insufficientRAM
+                                              : compatibilityStatus ==
+                                              CompatibilityStatus
+                                                  .insufficientStorage
+                                              ? AppLocalizations.of(context)!
+                                              .insufficientStorage
+                                              : AppLocalizations.of(context)!
+                                              .download,
+                                          style: TextStyle(
+                                            color: compatibilityStatus !=
+                                                CompatibilityStatus.compatible
+                                                ? Colors.white
+                                                : isDarkTheme
+                                                ? Colors.black
+                                                : Colors.white,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else
+                              SizedBox(
+                                width: double.infinity,
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: ElevatedButton(
+                                        onPressed: () => _removeModel(title),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor:
+                                          Colors.redAccent, // Red background
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                              vertical: 12),
+                                        ),
+                                        child: FittedBox(
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                            children: [
+                                              Icon(
+                                                Icons.delete,
+                                                color: Colors.white,
+                                                size: 16,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                AppLocalizations.of(context)!.remove,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: ElevatedButton(
+                                        onPressed: () => _startChatWithModel(
+                                            title, isServerSide),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: isDarkTheme
+                                              ? Colors.blueAccent
+                                              : Colors.blue,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                              vertical: 12, horizontal: 8),
+                                        ),
+                                        child: FittedBox(
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                            children: [
+                                              Icon(
+                                                Icons.chat_bubble_rounded,
+                                                color: Colors.white,
+                                                size: 16,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                AppLocalizations.of(context)!.chat,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                     ],
                   ),
-                ],
+                ),
+                if (isDownloading)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(
+                        painter: BorderPainter(
+                          progress: _rotationController.value * 360,
+                          borderRadius: 12,
+                          isDarkTheme: isDarkTheme,
+                        ),
+                      ),
+                    ),
+                  ),
+                if ((isDownloaded && !isServerSide) || isServerSide)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: isDarkTheme ? Colors.white : Colors.black,
+                            width: 2,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title, bool isDarkTheme) {
+    return Align(
+      alignment: Alignment.topCenter,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 6.0, bottom: 16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                color: isDarkTheme ? Colors.white : Colors.black,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 2),
+            Container(
+              height: 1,
+              width: 250,
+              color: isDarkTheme ? Colors.white : Colors.black,
+            ),
+          ],
         ),
       ),
     );
   }
 
-  /// Initiates the download of a model.
-  void _downloadModel(String url, String title) async {
+  void _startChatWithModel(String title, bool isServerSide,
+      {bool isCustomModel = false, String? modelPath}) async {
+    await _selectModel(title, isServerSide,
+        isCustomModel: isCustomModel, modelPath: modelPath);
+
+    final modelData = isCustomModel
+        ? _myModels.firstWhere((model) => model['title'] == title)
+        : _models.firstWhere((model) => model['title'] == title);
+
+    mainScreenKey.currentState?.chatScreenKey.currentState?.updateModelData(
+      title: modelData['title'],
+      description: modelData['description'],
+      imagePath: modelData['image'],
+      size: modelData['size'],
+      ram: modelData['ram'] ?? '',
+      producer: modelData['producer'] ?? '',
+      path: isServerSide ? null : (isCustomModel ? modelPath : _getFilePath(title)),
+      isServerSide: isServerSide,
+    );
+
+    mainScreenKey.currentState?.onItemTapped(0);
+
+    mainScreenKey.currentState?.chatScreenKey.currentState?.resetConversation();
+  }
+
+  void _openModelDetail(
+      String title,
+      String description,
+      String imagePath,
+      String size,
+      String ram,
+      String producer,
+      bool isServerSide,
+      bool isDownloaded,
+      bool isDownloading,
+      CompatibilityStatus compatibilityStatus,
+      String? url, {
+        bool isCustomModel = false,
+        String? modelPath,
+      }) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ModelDetailPage(
+          title: title,
+          description: description,
+          imagePath: imagePath,
+          size: size,
+          ram: ram,
+          producer: producer,
+          isDownloaded: isDownloaded,
+          isDownloading: isDownloading,
+          compatibilityStatus: compatibilityStatus,
+          isServerSide: isServerSide,
+          onDownloadPressed: () {
+            _downloadModel(url, title);
+          },
+          onRemovePressed: () async {
+            await _removeModel(title, isCustomModel: isCustomModel, modelPath: modelPath);
+          },
+          onChatPressed: () {
+            _startChatWithModel(title, isServerSide, isCustomModel: isCustomModel, modelPath: modelPath);
+          },
+        ),
+      ),
+    );
+  }
+
+
+  void _downloadModel(String? url, String title) async {
+    if (url == null) return;
+
     final prefs = await SharedPreferences.getInstance();
     prefs.setBool('is_downloading_$title', true);
 
     if (mounted) {
       setState(() {
         _isDownloading[title] = true;
+        _isPaused[title] = false;
       });
     }
 
     final filePath = _getFilePath(title);
 
-    FileDownloadHelper().downloadModel(
+    String? taskId = await FileDownloadHelper().downloadModel(
       url: url,
       filePath: filePath,
       title: title,
       onProgress: (fileName, progress) {
-        print("onProgress triggered: $progress");
-
-        if (progress < 0.0 || progress > 100.0) {
-          print("Invalid progress value ignored: $progress");
-          return;
-        }
-
-        if (progress >= 100.0) {
-          if (mounted) {
-            setState(() {
-              _isDownloading[title] = false;
-              _downloadStates[title] = true;
-            });
-            prefs.setBool('is_downloading_$title', false); // Set to false when download completes
-            prefs.setBool('is_downloaded_$title', true);
-          }
-        }
+        // Handle progress updates here if needed
       },
       onDownloadCompleted: (path) async {
         print("Download completed, file path: $path");
@@ -371,13 +888,20 @@ class _ModelsScreenState extends State<ModelsScreen> with TickerProviderStateMix
         final prefs = await SharedPreferences.getInstance();
         prefs.setBool('is_downloading_$title', false);
         prefs.setBool('is_downloaded_$title', true);
+        prefs.remove('download_task_id_$title');
 
         if (mounted) {
           setState(() {
             _isDownloading[title] = false;
             _downloadStates[title] = true;
+            _isPaused[title] = false;
           });
+          _initializeDownloadedModels();
         }
+
+        mainScreenKey.currentState
+            ?.chatScreenKey.currentState
+            ?.reloadModels();
       },
       onDownloadError: (error) async {
         print("Download error: $error");
@@ -385,129 +909,197 @@ class _ModelsScreenState extends State<ModelsScreen> with TickerProviderStateMix
         if (mounted) {
           setState(() {
             _isDownloading[title] = false;
+            _isPaused[title] = false;
           });
           final prefs = await SharedPreferences.getInstance();
           prefs.setBool('is_downloading_$title', false);
         }
 
-        // Bildirimleri kaldırdık, bu kısımlar silindi
+        // Removed notification
+      },
+      onDownloadPaused: () {
+        if (mounted) {
+          setState(() {
+            _isDownloading[title] = false;
+            _isPaused[title] = true;
+          });
+        }
       },
     );
+
+    if (taskId != null) {
+      _downloadTaskIds[title] = taskId;
+      prefs.setString('download_task_id_$title', taskId);
+    }
   }
 
-  /// Checks if the file for a given model exists.
   Future<void> _checkFileExists(String title) async {
     final filePath = _getFilePath(title);
-
-    print("Checking file path: $filePath");
 
     final file = File(filePath);
     final bool fileExists = await file.exists();
 
     if (fileExists) {
-      print("File exists: $filePath");
       final prefs = await SharedPreferences.getInstance();
       prefs.setBool('is_downloaded_$title', true);
 
       if (mounted) {
         setState(() {
           _downloadStates[title] = true;
+
+          if (!downloadedModelsManager.downloadedModels
+              .any((model) => model.name == title)) {
+            var modelData =
+            _models.firstWhere((model) => model['title'] == title);
+            downloadedModelsManager.downloadedModels.add(DownloadedModel(
+              name: title,
+              image: modelData['image'],
+            ));
+          }
         });
       }
     } else {
-      print("File does not exist: $filePath");
       final prefs = await SharedPreferences.getInstance();
       prefs.setBool('is_downloading_$title', false);
       prefs.setBool('is_downloaded_$title', false);
       if (mounted) {
         setState(() {
           _downloadStates[title] = false;
+
+          downloadedModelsManager.downloadedModels
+              .removeWhere((model) => model.name == title);
         });
       }
     }
   }
 
-  /// Retrieves the download states from SharedPreferences.
   void _checkDownloadStates() async {
     final prefs = await SharedPreferences.getInstance();
 
     for (var model in _models) {
-      String title = model['title']!;
-      final isDownloaded = prefs.getBool('is_downloaded_$title') ?? false;
-      if (mounted) {
-        setState(() {
-          _downloadStates[title] = isDownloaded;
-        });
-      }
+      String title = model['title'];
+      bool isServerSide = model['isServerSide'] ?? false;
 
-      // Additionally, check if the file actually exists
-      _checkFileExists(title);
+      if (!isServerSide) {
+        final isDownloaded = prefs.getBool('is_downloaded_$title') ?? false;
+        if (mounted) {
+          setState(() {
+            _downloadStates[title] = isDownloaded;
+          });
+        }
+
+        await _checkFileExists(title);
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _initializeDownloadedModels();
+      });
     }
   }
 
-  /// Selects a model and notifies other parts of the app.
-  void _selectModel(String title) async {
-    final prefs = await SharedPreferences.getInstance();
-    final selectedPath = _getFilePath(title);
-    await prefs.setString('selected_model_path', selectedPath);
-    await prefs.setString('selected_model_title', title);
-    setState(() {
-      _selectedModelTitle = title;
-    });
-
-    // Notify the chat screen to reload the model
-    mainScreenKey.currentState?.chatScreenKey.currentState?.loadModel();
-  }
-
-  /// Checks the downloading states from SharedPreferences.
   void _checkDownloadingStates() async {
-    // Check the downloading state of models
     final prefs = await SharedPreferences.getInstance();
+    final tasks = await FlutterDownloader.loadTasks();
+
     for (var model in _models) {
-      String title = model['title']!;
-      final isDownloading = prefs.getBool('is_downloading_$title') ?? false;
-      if (isDownloading) {
+      String title = model['title'];
+      bool isServerSide = model['isServerSide'] ?? false;
+
+      if (isServerSide) continue;
+
+      String? taskId = prefs.getString('download_task_id_$title');
+      if (taskId != null && tasks != null) {
+        DownloadTask? task;
+        for (var t in tasks) {
+          if (t.taskId == taskId) {
+            task = t;
+            break;
+          }
+        }
+
+        if (task != null) {
+          if (task.status == DownloadTaskStatus.running ||
+              task.status == DownloadTaskStatus.enqueued) {
+            setState(() {
+              _isDownloading[title] = true;
+              _isPaused[title] = false;
+              _downloadTaskIds[title] = taskId;
+            });
+          } else if (task.status == DownloadTaskStatus.paused) {
+            setState(() {
+              _isDownloading[title] = false;
+              _isPaused[title] = true;
+              _downloadTaskIds[title] = taskId;
+            });
+          } else if (task.status == DownloadTaskStatus.failed) {
+            setState(() {
+              _isDownloading[title] = false;
+              _isPaused[title] = false;
+            });
+            prefs.setBool('is_downloading_$title', false);
+            prefs.remove('download_task_id_$title');
+          } else {
+            setState(() {
+              _isDownloading[title] = false;
+              _isPaused[title] = false;
+            });
+          }
+        } else {
+          setState(() {
+            _isDownloading[title] = false;
+            _isPaused[title] = false;
+          });
+        }
+      } else {
         setState(() {
-          _isDownloading[title] = true;
+          _isDownloading[title] = false;
+          _isPaused[title] = false;
         });
       }
     }
   }
 
-  /// Removes a downloaded model from the device using only the model's title.
-  void _removeModel(String title) async {
+  Future<void> _removeModel(String title,
+      {bool isCustomModel = false, String? modelPath}) async {
     final prefs = await SharedPreferences.getInstance();
 
-    // Show customized confirmation dialog
     final bool? confirm = await showDialog<bool>(
       context: context,
       builder: (context) {
+        final isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
         return AlertDialog(
-          title: const Text(
-            'Modeli Kaldır',
-            style: TextStyle(color: Colors.white),
+          title: Text(
+            AppLocalizations.of(context)!.removeModel,
+            style:
+            TextStyle(color: isDarkTheme ? Colors.white : Colors.black),
           ),
           content: Text(
-            '$title modelini cihazınızdan kaldırmak istediğinizden emin misiniz?',
-            style: const TextStyle(color: Colors.white),
+            AppLocalizations.of(context)!.confirmRemoveModel(title),
+            style:
+            TextStyle(color: isDarkTheme ? Colors.white : Colors.black),
           ),
-          backgroundColor: Colors.grey[900],
+          backgroundColor:
+          isDarkTheme ? Colors.grey[900] : Colors.white,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8.0), // Adjusted corner radius
+            borderRadius: BorderRadius.circular(8.0),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text(
-                'İptal',
-                style: TextStyle(color: Colors.white),
+              child: Text(
+                AppLocalizations.of(context)!.cancel,
+                style: TextStyle(
+                    color: isDarkTheme ? Colors.white : Colors.blue),
               ),
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text(
-                'Kaldır',
-                style: TextStyle(color: Colors.white),
+              child: Text(
+                AppLocalizations.of(context)!.remove,
+                style: TextStyle(
+                    color: isDarkTheme ? Colors.white : Colors.red),
               ),
             ),
           ],
@@ -517,84 +1109,368 @@ class _ModelsScreenState extends State<ModelsScreen> with TickerProviderStateMix
 
     if (confirm != true) return;
 
-    final filePath = _getFilePath(title);
+    final filePath = isCustomModel ? modelPath! : _getFilePath(title);
     final file = File(filePath);
 
-    // Check if the file exists
     if (await file.exists()) {
       try {
         await file.delete();
         print("File deleted: $filePath");
 
-        // Update SharedPreferences
-        await prefs.setBool('is_downloaded_$title', false);
+        if (!isCustomModel) {
+          await prefs.setBool('is_downloaded_$title', false);
 
-        // If the removed model is selected, clear the selection
-        if (_selectedModelTitle == title) {
-          await prefs.remove('selected_model_path');
-          await prefs.remove('selected_model_title');
+          if (_selectedModelTitle == title) {
+            await prefs.remove('selected_model_path');
+            await prefs.remove('selected_model_title');
+            setState(() {
+              _selectedModelTitle = null;
+            });
+            mainScreenKey.currentState
+                ?.chatScreenKey.currentState
+                ?.loadModel();
+          }
+
+          if (mounted) {
+            setState(() {
+              _downloadStates[title] = false;
+              downloadedModelsManager.downloadedModels
+                  .removeWhere((model) => model.name == title);
+            });
+          }
+
+          mainScreenKey.currentState
+              ?.chatScreenKey.currentState
+              ?.reloadModels();
+        } else {
           setState(() {
-            _selectedModelTitle = null;
+            _myModels.removeWhere((model) => model['title'] == title);
           });
-          // Notify the chat screen to reload the model
-          mainScreenKey.currentState?.chatScreenKey.currentState?.loadModel();
         }
+
+        // Removed notification
+      } catch (e) {
+        print("File deletion error: $e");
+        // Removed notification
+      }
+    } else {
+      print("File not found: $filePath");
+
+      if (!isCustomModel) {
+        await prefs.setBool('is_downloaded_$title', false);
 
         if (mounted) {
           setState(() {
             _downloadStates[title] = false;
+            downloadedModelsManager.downloadedModels
+                .removeWhere((model) => model.name == title);
           });
         }
-
-      } catch (e) {
-        print("File deletion error: $e");
-        // Handle the error as needed
-      }
-    } else {
-      print("File not found: $filePath");
-      // Update SharedPreferences if the file doesn't exist
-      await prefs.setBool('is_downloaded_$title', false);
-
-      if (mounted) {
+      } else {
         setState(() {
-          _downloadStates[title] = false;
+          _myModels.removeWhere((model) => model['title'] == title);
         });
       }
+
+      // Removed notification
+    }
+  }
+
+  Future<void> _selectModel(String title, bool isServerSide,
+      {bool isCustomModel = false, String? modelPath}) async {
+    final prefs = await SharedPreferences.getInstance();
+    String? filePath =
+    isServerSide ? null : (isCustomModel ? modelPath : _getFilePath(title));
+
+    if (!isServerSide && filePath == null) {
+      filePath = _getFilePath(title);
+    }
+
+    await prefs.setString('selected_model_title', title);
+    if (filePath != null) {
+      await prefs.setString('selected_model_path', filePath);
+    } else {
+      await prefs.remove('selected_model_path');
+    }
+
+    setState(() {
+      _selectedModelTitle = title;
+    });
+
+    mainScreenKey.currentState?.chatScreenKey.currentState?.updateModelData(
+      title: title,
+      description: isCustomModel
+          ? AppLocalizations.of(context)!.myModelDescription
+          : _models.firstWhere((model) => model['title'] == title)['description'],
+      imagePath: isCustomModel
+          ? 'assets/customai.png'
+          : _models.firstWhere((model) => model['title'] == title)['image'],
+      size: isCustomModel
+          ? ''
+          : _models.firstWhere((model) => model['title'] == title)['size'],
+      ram: isCustomModel
+          ? ''
+          : _models.firstWhere((model) => model['title'] == title)['ram'],
+      producer: isCustomModel
+          ? ''
+          : _models.firstWhere((model) => model['title'] == title)['producer'],
+      path: filePath,
+      isServerSide: isServerSide,
+    );
+  }
+
+  void _cancelDownload(String title) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    String? taskId = _downloadTaskIds[title];
+    if (taskId != null) {
+      await FileDownloadHelper().cancelDownload(taskId);
+      _downloadTaskIds.remove(title);
+      prefs.remove('download_task_id_$title');
+    }
+
+    prefs.setBool('is_downloading_$title', false);
+
+    if (mounted) {
+      setState(() {
+        _isDownloading[title] = false;
+        _isPaused[title] = false;
+      });
+    }
+
+    // Removed notification
+  }
+
+  void _resumeDownload(String title) async {
+    String? taskId = _downloadTaskIds[title];
+    if (taskId != null) {
+      String? newTaskId = await FileDownloadHelper().resumeDownload(taskId);
+      if (newTaskId != null) {
+        _downloadTaskIds[title] = newTaskId;
+        final prefs = await SharedPreferences.getInstance();
+        prefs.setString('download_task_id_$title', newTaskId);
+        setState(() {
+          _isPaused[title] = false;
+          _isDownloading[title] = true;
+        });
+
+        // Removed notification
+      }
+    }
+  }
+
+  void _showUploadModelDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
+        return AlertDialog(
+          title: Center(
+            child: Text(
+              AppLocalizations.of(context)!.uploadYourOwnModel,
+              style: TextStyle(
+                fontWeight: FontWeight.bold, // Daha kalın başlık
+                color: isDarkTheme ? Colors.white : Colors.black,
+                fontSize: 18,
+              ),
+            ),
+          ),
+          content: GestureDetector(
+            onTap: _pickModelFile,
+            child: Container(
+              width: double.infinity,
+              height: 200,
+              decoration: BoxDecoration(
+                color: isDarkTheme ? Colors.grey[800] : Colors.grey[200],
+                border: Border.all(
+                  color: Colors.white, // İnce beyaz çerçeve
+                  width: 1,
+                ),
+                borderRadius: BorderRadius.circular(6), // Köşeleri biraz daha sivriltme
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.upload_file,
+                    size: 50,
+                    color: isDarkTheme ? Colors.white : Colors.blue,
+                  ),
+                  SizedBox(height: 16),
+                  Text(
+                    AppLocalizations.of(context)!.selectGGUFFile,
+                    style: TextStyle(
+                      color: isDarkTheme ? Colors.white70 : Colors.black54,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          backgroundColor: isDarkTheme ? Color(0xFF0121212): Colors.white,
+          shape: RoundedRectangleBorder(
+            side: BorderSide(color: Colors.white, width: 1), // İnce beyaz çizgi
+            borderRadius: BorderRadius.circular(12.0), // Köşeleri biraz daha sivriltme
+          ),
+          actionsAlignment: MainAxisAlignment.center, // Butonu ortaya hizala
+          actions: [
+            IconButton(
+              onPressed: () => Navigator.of(context).pop(),
+              icon: Icon(
+                Icons.close,
+                color: isDarkTheme ? Colors.white : Colors.blue,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _pickModelFile() async {
+    Navigator.of(context).pop();
+
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.any, // Allow all file types
+      );
+
+      if (result != null && result.files.single.path != null) {
+        String filePath = result.files.single.path!;
+        String fileName = result.files.single.name;
+
+        // Check file extension
+        if (path.extension(fileName).toLowerCase() != '.gguf') {
+          // Removed notification
+          return;
+        }
+
+        String newFilePath = path.join(_filesDirectoryPath, fileName);
+        File file = File(filePath);
+
+        if (await File(newFilePath).exists()) {
+          // Removed notification
+          return;
+        }
+
+        await file.copy(newFilePath);
+
+        setState(() {
+          _myModels.add({
+            'title': path.basenameWithoutExtension(fileName),
+            'description': AppLocalizations.of(context)!.myModelDescription,
+            'size': '${(file.lengthSync() / 1024).toStringAsFixed(2)} KB', // Calculate file size
+            'image': 'assets/customai.png',
+            'path': newFilePath,
+          });
+        });
+
+        // Removed notification
+      } else {
+        // User canceled file selection
+        // Removed notification
+      }
+    } catch (e) {
+      print("Error picking or copying file: $e");
+      // Removed notification
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final localizations = AppLocalizations.of(context)!;
+
+    final _isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
+
+    final serverSideModels =
+    _models.where((model) => model['isServerSide'] ?? false).toList();
+    final localModels =
+    _models.where((model) => !(model['isServerSide'] ?? false)).toList();
+
     return Scaffold(
-      backgroundColor: const Color(0xFF141414),
+      backgroundColor:
+      _isDarkTheme ? const Color(0xFF090909) : Colors.white,
       appBar: AppBar(
-        title: const Text(
-          'Modeller',
+        title: Text(
+          localizations.modelsTitle,
           style: TextStyle(
             fontFamily: 'Roboto',
-            color: Colors.white,
+            color: _isDarkTheme ? Colors.white : Colors.black,
             fontSize: 24,
             fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor: const Color(0xFF141414),
+        backgroundColor:
+        _isDarkTheme ? const Color(0xFF090909) : Colors.white,
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: Icon(Icons.add,
+                color: _isDarkTheme ? Colors.white : Colors.black),
+            onPressed: _showUploadModelDialog,
+          ),
+        ],
       ),
       body: Column(
         children: [
           Expanded(
-            // Place Expanded within the body
             child: ListView(
-              padding: const EdgeInsets.all(16.0),
+              padding: const EdgeInsets.only(
+                  left: 16.0, right: 16.0, bottom: 16.0, top: 0.0),
               children: [
-                ..._models.map((model) {
-                  return _buildModelTile(
-                    model['title']!,
-                    model['description']!,
-                    model['url']!,
-                    model['size']!,
-                  );
-                }),
+                if (localModels.isNotEmpty) ...[
+                  _buildSectionHeader(
+                      localizations.localModels, _isDarkTheme),
+                  ...localModels.map((model) {
+                    return _buildModelTile(
+                      model['title']!,
+                      model['description']!,
+                      model['url'],
+                      model['size'],
+                      model['image']!,
+                      model['ram'],
+                      model['producer']!,
+                      model['isServerSide'] ?? false,
+                      _isDarkTheme,
+                    );
+                  }).toList(),
+                ],
+                if (serverSideModels.isNotEmpty) ...[
+                  _buildSectionHeader(
+                      localizations.serverSideModels, _isDarkTheme),
+                  ...serverSideModels.map((model) {
+                    return _buildModelTile(
+                      model['title']!,
+                      model['description']!,
+                      model['url'],
+                      model['size'],
+                      model['image']!,
+                      model['ram'],
+                      model['producer']!,
+                      model['isServerSide'] ?? false,
+                      _isDarkTheme,
+                    );
+                  }).toList(),
+                ],
+                if (_myModels.isNotEmpty) ...[
+                  _buildSectionHeader(localizations.myModels, _isDarkTheme),
+                  ..._myModels.map((model) {
+                    return _buildModelTile(
+                      model['title'],
+                      model['description'],
+                      null,
+                      '',
+                      model['image'],
+                      '',
+                      '',
+                      false,
+                      _isDarkTheme,
+                      isCustomModel: true,
+                      modelPath: model['path'],
+                    );
+                  }).toList(),
+                ],
                 Align(
                   alignment: Alignment.topCenter,
                   child: Padding(
@@ -602,10 +1478,11 @@ class _ModelsScreenState extends State<ModelsScreen> with TickerProviderStateMix
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        const Text(
-                          'Sistem Bilgileri',
+                        Text(
+                          localizations.systemInfo,
                           style: TextStyle(
-                            color: Colors.white,
+                            color:
+                            _isDarkTheme ? Colors.white : Colors.black,
                             fontSize: 22,
                             height: 2,
                             fontWeight: FontWeight.bold,
@@ -615,7 +1492,8 @@ class _ModelsScreenState extends State<ModelsScreen> with TickerProviderStateMix
                         Container(
                           height: 1,
                           width: 180,
-                          color: Colors.white,
+                          color:
+                          _isDarkTheme ? Colors.white : Colors.black,
                         ),
                       ],
                     ),
@@ -625,23 +1503,43 @@ class _ModelsScreenState extends State<ModelsScreen> with TickerProviderStateMix
                   Container(
                     padding: const EdgeInsets.all(16.0),
                     decoration: BoxDecoration(
-                      color: Colors.grey[800],
-                      borderRadius: BorderRadius.circular(8),
+                      color: _isDarkTheme
+                          ? const Color(0xFF101010)
+                          : Colors.grey[200],
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Cihaz Belleği: ${(_systemInfo!.deviceMemory / 1024).toStringAsFixed(1)} GB',
-                          style: const TextStyle(color: Colors.white),
+                          localizations.deviceMemory(
+                              (_systemInfo!.deviceMemory / 1024)
+                                  .toStringAsFixed(1)),
+                          style: TextStyle(
+                            color: _isDarkTheme
+                                ? Colors.white
+                                : Colors.black,
+                          ),
                         ),
                         Text(
-                          'Depolama Alanı: ${(_systemInfo!.totalStorage / 1024).toStringAsFixed(1)} GB',
-                          style: const TextStyle(color: Colors.white),
+                          localizations.storageSpace(
+                              (_systemInfo!.totalStorage / 1024)
+                                  .toStringAsFixed(1)),
+                          style: TextStyle(
+                            color: _isDarkTheme
+                                ? Colors.white
+                                : Colors.black,
+                          ),
                         ),
                         Text(
-                          'Boş Depolama Alanı: ${(_systemInfo!.freeStorage / 1024).toStringAsFixed(1)} GB',
-                          style: const TextStyle(color: Colors.white),
+                          localizations.freeStorageSpace(
+                              (_systemInfo!.freeStorage / 1024)
+                                  .toStringAsFixed(1)),
+                          style: TextStyle(
+                            color: _isDarkTheme
+                                ? Colors.white
+                                : Colors.black,
+                          ),
                         ),
                       ],
                     ),
@@ -652,5 +1550,49 @@ class _ModelsScreenState extends State<ModelsScreen> with TickerProviderStateMix
         ],
       ),
     );
+  }
+}
+
+class BorderPainter extends CustomPainter {
+  final double progress;
+  final double borderRadius;
+  final bool isDarkTheme;
+
+  BorderPainter(
+      {required this.progress,
+        required this.borderRadius,
+        required this.isDarkTheme});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Rect rect = Offset.zero & size;
+
+    final SweepGradient gradient = SweepGradient(
+      startAngle: 0.0,
+      endAngle: 2 * pi,
+      colors: [
+        isDarkTheme ? Colors.white : Colors.black,
+        Colors.transparent,
+      ],
+      stops: [0.0, 0.2],
+      transform: GradientRotation((progress) * (pi / 180)),
+    );
+
+    final Paint paint = Paint()
+      ..shader = gradient.createShader(rect.deflate(1))
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect.deflate(1), Radius.circular(borderRadius)),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant BorderPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.isDarkTheme != isDarkTheme;
   }
 }

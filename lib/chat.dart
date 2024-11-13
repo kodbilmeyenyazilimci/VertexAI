@@ -1,197 +1,404 @@
-import 'package:ai/info.dart';
-import 'package:ai/premium.dart';
+// chat.dart
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 import 'account.dart';
+import 'data.dart';
 import 'main.dart';
+import 'menu.dart';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart'; // Localization package
+import 'api.dart'; // Import ApiService
+import 'package:flutter_markdown/flutter_markdown.dart'; // For rendering markdown
+import 'premium.dart';
+import 'theme.dart'; // Import ThemeProvider
+import 'dart:io';
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 
-// Message class representing user and model messages
+// Represents user and model messages
 class Message {
-  String text; // Made mutable to allow updates
+  String text; // Mutable text
   final bool isUserMessage;
   Message({required this.text, required this.isUserMessage});
+}
+
+// Represents model information
+class ModelInfo {
+  final String title;
+  final String description;
+  final String imagePath;
+  final String size;
+  final String ram;
+  final String producer;
+  final String path;
+
+  ModelInfo({
+    required this.title,
+    required this.description,
+    required this.imagePath,
+    required this.size,
+    required this.ram,
+    required this.producer,
+    required this.path,
+  });
 }
 
 class ChatScreen extends StatefulWidget {
   String? conversationID;
   String? conversationTitle;
 
-  ChatScreen({Key? key, this.conversationID, this.conversationTitle}) : super(key: key);
+  // New parameters to receive model information
+  final String? modelTitle;
+  final String? modelDescription;
+  final String? modelImagePath;
+  final String? modelSize;
+  final String? modelRam;
+  final String? modelProducer;
+  final String? modelPath;
+
+  ChatScreen({
+    Key? key,
+    this.conversationID,
+    this.conversationTitle,
+    this.modelTitle,
+    this.modelDescription,
+    this.modelImagePath,
+    this.modelSize,
+    this.modelRam,
+    this.modelProducer,
+    this.modelPath,
+  }) : super(key: key);
 
   @override
   ChatScreenState createState() => ChatScreenState();
 }
 
 class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
-  List<Message> messages = []; // To store conversation messages
-  final TextEditingController _controller = TextEditingController(); // To handle input field text
-  bool isModelLoaded = false; // To track if the model is loaded
-  bool isWaitingForResponse = false; // Track if awaiting model's response
-  Timer? responseTimer; // Timer to handle delayed response
-  final uuid = Uuid(); // UUID to generate unique conversation IDs
-  String? conversationID; // Conversation ID for current chat
-  String? conversationTitle; // Title for the current conversation
-  static const MethodChannel llamaChannel = MethodChannel('com.vertex.ai/llama');
+  List<Message> messages = []; // Stores conversation messages
+  final TextEditingController _controller =
+  TextEditingController(); // Manages input text
+  bool isModelLoaded = false; // Tracks if the model is loaded
+  bool isWaitingForResponse =
+  false; // Tracks if waiting for model's response
+  Timer? responseTimer; // Timer to manage delayed responses
+  final uuid = Uuid(); // Generates unique conversation IDs
+  String? conversationID; // Current conversation ID
+  String? conversationTitle; // Current conversation title
+  late AnimationController _modelAnimationController;
+  final Duration _modelAnimationDuration = const Duration(milliseconds: 500);
+  final int _modelAnimationDelay = 100; // milliseconds delay between each item
+  static const MethodChannel llamaChannel =
+  MethodChannel('com.vertex.ai/llama');
 
-  bool _isSendButtonVisible = false; // To show or hide the send button
-  double suggestionsOpacity = 1.0; // Opacity for suggestions display
-  double additionalSuggestionsOpacity = 1.0; // Opacity for extra suggestions
-  double logoOpacity = 1.0; // Opacity for logo
-  late final ScrollController _scrollController = ScrollController(); // To handle message list scrolling
+  bool _isSendButtonVisible = false; // Controls send button visibility
+  final ScrollController _scrollController =
+  ScrollController(); // Controls message list scrolling
 
-  final List<String> suggestions = [
-    "👋 Merhaba",
-    "😊 Nasılsın?",
-    "🆘 Bana yardım edebilir misin?",
-    "🌦️ Bugün hava nasıl?",
-    "🍕 En sevdiğin yemek nedir?",
-    "⚽ Futbol sever misin?",
-    "🎵 Hangi müzikleri dinlersin?",
-    "🏖️ Tatilde nereye gitmek istersin?"
-  ];
+  // Model information variables
+  String? modelTitle;
+  String? modelDescription;
+  String? modelImagePath;
+  String? modelSize;
+  String? modelRam;
+  String? modelProducer;
+  String? modelPath;
 
-  final List<String> additionalSuggestions = [
-    "📚 Hangi kitabı okuyorsun?",
-    "🎬 En son hangi filmi izledin?",
-    "🏞️ Doğayı sever misin?",
-    "🖼️ Hangi sanat dalıyla ilgileniyorsun?",
-    "👩‍🍳 Yemek yapmayı sever misin?",
-    "🚴‍♂️ Spor yapar mısın?",
-    "🌍 Seyahat etmeyi sever misin?",
-    "🤖 Gelecek hakkında ne düşünüyorsun?"
-  ];
+  bool isModelSelected = false; // Tracks if a model is selected
 
-  // For the suggestions bar (bottom panel)
-  late final ScrollController _suggestionsScrollController;
-  late final AnimationController _suggestionsAnimationController;
+  List<ModelInfo> _allModels = []; // List of all models
+  List<ModelInfo> _filteredModels = []; // Models filtered by search
+  String _searchQuery = '';
 
-  // For the additional suggestions bar (top panel)
-  late final ScrollController _additionalSuggestionsScrollController;
-  late final AnimationController _additionalSuggestionsAnimationController;
+  final ApiService apiService = ApiService(); // ApiService instance
 
-  // For screen transitions
-  late final AnimationController _fadeAnimationController;
-  late Animation<double> _fadeAnimation;
+  // New flag: responseStopped
+  bool responseStopped = false;
 
-  // Initialization: Load model, set up message handler, load previous messages if any
+  // Variables for inappropriate message warning
+  bool _showInappropriateMessageWarning = false;
+
+  // Animation variables for inappropriate message warning
+  late AnimationController _warningAnimationController;
+  late Animation<Offset> _warningSlideAnimation;
+  late Animation<double> _warningFadeAnimation;
+
+  void reloadModels() {
+    setState(() {
+      _loadModels();
+    });
+  }
+
+  // Initialization: Load model, set up message handler, load previous messages
   @override
   void initState() {
     super.initState();
-    loadModel(); // Loads the AI model
-    llamaChannel.setMethodCallHandler(_methodCallHandler); // Sets method channel for native communication
+
+    // Retrieve model information from widget
+    modelTitle = widget.modelTitle;
+    modelDescription = widget.modelDescription;
+    modelImagePath = widget.modelImagePath;
+    modelSize = widget.modelSize;
+    modelRam = widget.modelRam;
+    modelProducer = widget.modelProducer;
+    modelPath = widget.modelPath;
+
+    // Initialize model animation controller
+    _modelAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+
+    // Initialize the AnimationController for the warning notification
+    _warningAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+
+    // Define the slide animation
+    _warningSlideAnimation = Tween<Offset>(
+      begin: const Offset(0, 1.0),  // Alt kısımdan başlayarak yukarı doğru hareket
+      end: const Offset(0, 0),
+    ).animate(
+      CurvedAnimation(
+        parent: _warningAnimationController,
+        curve: Curves.easeInOut,
+      ),
+    );
+
+    // Define the fade animation
+    _warningFadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(
+      CurvedAnimation(
+        parent: _warningAnimationController,
+        curve: Curves.easeIn,
+      ),
+    );
+
+    if (isServerSideModel(modelTitle)) {
+      isModelSelected = true;
+      isModelLoaded = true; // Server-side models are always loaded via API
+    } else if (modelPath != null && modelPath!.isNotEmpty) {
+      isModelSelected = true;
+      loadModel(); // Load AI model
+    } else {
+      isModelSelected = false;
+      _loadModels();
+    }
+
+    llamaChannel
+        .setMethodCallHandler(_methodCallHandler); // Set method channel handler
+
     if (widget.conversationID != null) {
-      _loadPreviousMessages(widget.conversationID!); // Load past messages if available
+      _loadPreviousMessages(widget.conversationID!); // Load previous messages
       conversationID = widget.conversationID;
       conversationTitle = widget.conversationTitle;
     }
 
-    // Initialize scroll controllers
-    _suggestionsScrollController = ScrollController();
-    _additionalSuggestionsScrollController = ScrollController();
-
-    // Initialize animation controllers with increased duration for slower animation
-    _suggestionsAnimationController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 30),
-    )..addListener(() {
-      if (_suggestionsScrollController.hasClients) {
-        _suggestionsScrollController.jumpTo(
-          _suggestionsAnimationController.value *
-              _suggestionsScrollController.position.maxScrollExtent,
-        );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (isModelSelected) {
+        _modelAnimationController.forward();
       }
     });
-
-    // For the bottom panel, scroll left to right (value from 0 to 1)
-    _suggestionsAnimationController.repeat();
-
-    _additionalSuggestionsAnimationController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 30),
-    )..addListener(() {
-      if (_additionalSuggestionsScrollController.hasClients) {
-        _additionalSuggestionsScrollController.jumpTo(
-          _additionalSuggestionsAnimationController.value *
-              _additionalSuggestionsScrollController.position.maxScrollExtent,
-        );
-      }
-    });
-
-    // For the top panel, scroll left to right (value from 0 to 1)
-    _additionalSuggestionsAnimationController.repeat();
-
-    // Initialize fade animation for screen transitions
-    _fadeAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 100),
-      vsync: this,
-    );
-
-    _fadeAnimation = CurvedAnimation(
-      parent: _fadeAnimationController,
-      curve: Curves.easeInOut,
-    );
-
-    _fadeAnimationController.forward();
   }
 
-  // Load model configuration and invoke native method to load it
+  Future<void> _loadModels() async {
+    _allModels.clear();
+
+    final prefs = await SharedPreferences.getInstance();
+
+    final List<Map<String, dynamic>> allModels = ModelData.models(context);
+
+    for (var model in allModels) {
+      String title = model['title']!;
+      final isDownloaded = prefs.getBool('is_downloaded_$title') ?? false;
+      if (isDownloaded) {
+        String modelFilePath = await _getModelFilePath(title);
+        _allModels.add(ModelInfo(
+          title: title,
+          description: model['description']!,
+          imagePath: model['image']!,
+          size: model['size']!,
+          ram: model['ram']!,
+          producer: model['producer']!,
+          path: modelFilePath, // Set correct path
+        ));
+      }
+    }
+
+    // Add server-side models to the list
+    _allModels.add(ModelInfo(
+      title: 'Gemini',
+      description: 'Gemini AI Model',
+      imagePath: 'assets/gemini.png',
+      size: '',
+      ram: '',
+      producer: 'Google',
+      path: 'gemini',
+    ));
+
+    // Add Llama3.2 model to the list
+    _allModels.add(ModelInfo(
+      title: 'Llama3.2',
+      description: 'Llama3.2 AI Model',
+      imagePath: 'assets/llama.png', // Update with actual image path
+      size: '', // Size not applicable
+      ram: '', // RAM not applicable
+      producer: 'Meta', // Producer of Llama
+      path: 'llama3.2', // Placeholder path as 'llama3.2'
+    ));
+
+    // Add Hermes model to the list
+    _allModels.add(ModelInfo(
+      title: 'Hermes',
+      description: 'Hermes 3 AI Model',
+      imagePath: 'assets/hermes.png', // Placeholder image path
+      size: '', // Size not applicable
+      ram: '', // RAM not applicable
+      producer: 'Nous Research', // Producer of Hermes
+      path: 'hermes', // Placeholder path
+    ));
+
+    // Initialize filtered models
+    _filteredModels = List.from(_allModels);
+
+    setState(() {});
+
+    // Update animation controller
+    _initializeModelAnimationController();
+  }
+
+  void _initializeModelAnimationController() {
+    _modelAnimationController.dispose();
+    _modelAnimationController = AnimationController(
+      vsync: this,
+      duration: Duration(
+          milliseconds: _filteredModels.length * _modelAnimationDelay +
+              _modelAnimationDuration.inMilliseconds),
+    );
+    _modelAnimationController.forward();
+  }
+
+  // Load model configuration and invoke local method to load the model
   Future<void> loadModel() async {
     final prefs = await SharedPreferences.getInstance();
-    final modelPath = prefs.getString('selected_model_path');
-    llamaChannel.invokeMethod('loadModel', {'path': modelPath});
+    final selectedModelPath = modelPath ?? prefs.getString('selected_model_path');
+    if (selectedModelPath != null && selectedModelPath.isNotEmpty) {
+      try {
+        llamaChannel.invokeMethod('loadModel', {'path': selectedModelPath});
+        setState(() {
+          isModelLoaded = true; // Indicate that the model is loaded
+        });
+      } catch (e) {
+        print('Error loading model: $e');
+        setState(() {
+          isModelLoaded = false;
+        });
+      }
+    } else {
+      // Model not selected
+      setState(() {
+        isModelLoaded = false;
+      });
+    }
   }
 
   // MethodCall handler to receive and respond to messages from the model
   Future<void> _methodCallHandler(MethodCall call) async {
     if (call.method == 'onMessageResponse') {
-      _onMessageResponse(call.arguments as String); // Process response tokens from model
+      if (isLocalModel(modelTitle)) {
+        // Yerel model, veriyi String olarak işleyelim
+        _onMessageResponse(call.arguments as String);
+      } else if (isServerSideModel(modelTitle)) {
+        // Sunucu taraflı model, veriyi UTF8 olarak işleyelim
+        final data = call.arguments;
+        String decodedMessage;
+        if (data is Uint8List) {
+          decodedMessage = utf8.decode(data);
+        } else if (data is String) {
+          decodedMessage = data;
+        } else {
+          decodedMessage = '';
+        }
+        _onMessageResponse(decodedMessage);
+      }
     } else if (call.method == 'onMessageComplete') {
-      _finalizeResponse(); // Finalize and show the full model response
+      _finalizeResponse(); // Yanıt tamamlandığında işlem sonlandır
     } else if (call.method == 'onModelLoaded') {
-      setState(() => isModelLoaded = true); // Set model loaded state
+      setState(() => isModelLoaded = true); // Modelin yüklendiğini belirt
     }
   }
 
-  // Ensure that _onMessageResponse properly updates the last message
+  // Yerel model olup olmadığını kontrol eden fonksiyon
+  bool isLocalModel(String? modelTitle) {
+    // Model server-side modellerden biri değilse yerel model kabul edilir
+    return !isServerSideModel(modelTitle);
+  }
+
+  // Sunucu taraflı model olup olmadığını kontrol eden fonksiyon
+  bool isServerSideModel(String? modelTitle) {
+    return modelTitle == 'Gemini' || modelTitle == 'Llama3.2' || modelTitle == 'Hermes';
+  }
+
+  Future<String> _getModelFilePath(String title) async {
+    Directory appDocDir = await getApplicationDocumentsDirectory();
+    String filesDirectoryPath = appDocDir.path;
+    String sanitizedTitle = title.replaceAll(' ', '_');
+    return path.join(filesDirectoryPath, '$sanitizedTitle.gguf');
+  }
+
+  // Process tokens from the model by updating the last message
   void _onMessageResponse(String token) {
-    if (isWaitingForResponse && messages.isNotEmpty && !messages.last.isUserMessage) {
+    if (isWaitingForResponse &&
+        messages.isNotEmpty &&
+        !messages.last.isUserMessage) {
       setState(() {
-        messages.last.text += token; // Append token to the last message
+        messages.last.text += token; // Append token to last message
       });
-      _startResponseTimeout(); // Start or reset the timer for model's response
-      _scrollToBottom(); // Scroll to show the ongoing response
+      _startResponseTimeout(); // Start or reset response timeout
+
+      if (_isUserAtBottom()) {
+        _scrollToBottom();
+      }
     }
   }
 
-  // Starts a timer to handle response completion
+  // Start a timer to finalize response after a delay
   void _startResponseTimeout() {
-    responseTimer?.cancel(); // Cancel any existing timer
-    responseTimer = Timer(const Duration(seconds: 5), _finalizeResponse); // Call _finalizeResponse after 5 seconds
+    responseTimer?.cancel(); // Cancel existing timer
+    responseTimer =
+        Timer(const Duration(seconds: 5), _finalizeResponse); // 5 sec delay
   }
 
-  // Finalize and display the model's response in the chat
+  // Finalize and display the model's response
   void _finalizeResponse() {
-    if (isWaitingForResponse && messages.isNotEmpty && !messages.last.isUserMessage) {
+    if (isWaitingForResponse &&
+        messages.isNotEmpty &&
+        !messages.last.isUserMessage) {
       setState(() {
-        isWaitingForResponse = false; // Set waiting state to false
+        // Trim trailing spaces
+        messages.last.text = messages.last.text.trimRight();
+        isWaitingForResponse = false;
       });
 
       String fullResponse = messages.last.text;
 
-      // No need to set conversationID here; it's already set in _sendMessage
+      // Save the response to conversation
+      _saveMessageToConversation(fullResponse, false);
 
-      _saveMessageToConversation(fullResponse, false); // Save the model's response
-      _scrollToBottom(); // Scroll to show the new message
+      _scrollToBottom(forceScroll: true);
     }
 
-    responseTimer?.cancel(); // Stop the timer
+    responseTimer?.cancel();
   }
 
-  // Loads previous messages from storage using conversation ID
+  // Load previous messages using conversation ID
   Future<void> _loadPreviousMessages(String conversationID) async {
     final prefs = await SharedPreferences.getInstance();
     final List<String>? messagesList = prefs.getStringList(conversationID);
@@ -204,74 +411,128 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           isUserMessage: isUserMessage,
         ));
       }
-
-      // After loading messages, check if messages list is not empty
-      if (messages.isNotEmpty) {
-        // Hide the suggestion panels and background
-        setState(() {
-          suggestionsOpacity = 0.0;
-          additionalSuggestionsOpacity = 0.0;
-          logoOpacity = 0.0;
-        });
-        _suggestionsAnimationController.stop();
-        _additionalSuggestionsAnimationController.stop();
-      }
     }
     setState(() {}); // Refresh UI
-    _scrollToBottom(); // Scroll to show loaded messages
+    _scrollToBottom(forceScroll: true); // Scroll to show loaded messages
   }
 
-  // Saves the conversation title
+  // Save conversation title
   Future<void> _saveConversationTitle(String title) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('current_conversation_title', title); // Save conversation title
+    await prefs.setString('current_conversation_title', title); // Save title
   }
 
-  // Saves individual messages to the conversation
-  Future<void> _saveMessageToConversation(String message, bool isUserMessage) async {
+  // Save individual messages to the conversation
+  Future<void> _saveMessageToConversation(
+      String message, bool isUserMessage) async {
     final prefs = await SharedPreferences.getInstance();
 
-    final List<String> conversationMessages = prefs.getStringList(conversationID!) ?? [];
-    conversationMessages.add(isUserMessage ? "User: $message" : "Model: $message");
-    await prefs.setStringList(conversationID!, conversationMessages);
-  }
+    if (conversationID == null) return; // Ensure conversationID is set
 
-  // Handles sending the message
-  void _sendMessage([String? textFromButton]) {
-    String text = textFromButton ?? _controller.text.trim();
-
-    if (text.isNotEmpty) {
-      setState(() {
-        messages.add(Message(text: text, isUserMessage: true)); // Add user's message to list
-        _controller.clear(); // Clear input field
-        isWaitingForResponse = true; // Set waiting for response
-        _isSendButtonVisible = false; // Hide send button
-
-        // Add an empty model message to receive tokens
-        messages.add(Message(text: "", isUserMessage: false)); // Add empty model response
-      });
-
-      if (conversationID == null) {
-        conversationID = uuid.v4(); // Generate conversation ID
-        conversationTitle = text; // Use the user's first message as the title
-        _saveConversationTitle(conversationTitle!); // Save conversation title
-        _saveConversation(conversationTitle!); // Save conversation immediately
-
-        // Notify the MenuScreen to reload conversations
-        mainScreenKey.currentState?.menuScreenKey.currentState?.reloadConversations();
-      }
-
-      // Save the user's message
-      _saveMessageToConversation(text, true);
-
-      llamaChannel.invokeMethod('sendMessage', {'message': text}); // Send message to model
-      _startResponseTimeout(); // Start response timeout timer
-      _fadeOutSuggestionsAndLogo(); // Fade out UI elements
-      _scrollToBottom(); // Scroll to show the new message
+    if (isUserMessage) {
+      final List<String> conversationMessages =
+          prefs.getStringList(conversationID!) ?? [];
+      conversationMessages.add("User: $message");
+      await prefs.setStringList(conversationID!, conversationMessages);
+    } else {
+      // Save model response
+      final List<String> conversationMessages =
+          prefs.getStringList(conversationID!) ?? [];
+      conversationMessages.add("Model: $message");
+      await prefs.setStringList(conversationID!, conversationMessages);
     }
   }
 
-  // Updated resetConversation to reset to initial state with suggestions and background visible
+  // Load a selected conversation
+  void loadConversation(ConversationData conversationData) {
+    setState(() {
+      widget.conversationID = conversationData.conversationID;
+      widget.conversationTitle = conversationData.conversationTitle;
+      conversationID = conversationData.conversationID;
+      conversationTitle = conversationData.conversationTitle;
+      modelTitle = conversationData.modelTitle;
+      modelImagePath = conversationData.modelImagePath;
+      isModelSelected = true;
+      isModelLoaded = isServerSideModel(modelTitle) ? true : false;
+      messages.clear();
+      responseStopped = false; // Reset the flag
+    });
+    _loadPreviousMessages(conversationData.conversationID);
+    if (isServerSideModel(modelTitle)) {
+      setState(() {
+        isModelLoaded = true;
+      });
+    } else {
+      loadModel(); // Load the selected model
+    }
+  }
+
+  // Update the conversation title
+  void updateConversationTitle(String newTitle) {
+    setState(() {
+      conversationTitle = newTitle;
+    });
+  }
+
+  // Update model data and reset the conversation
+  void updateModelData({
+    String? title,
+    String? description,
+    String? imagePath,
+    String? size,
+    String? ram,
+    String? producer,
+    String? path,
+    required bool isServerSide,
+  }) {
+    setState(() {
+      modelTitle = title ?? modelTitle;
+      modelDescription = description ?? modelDescription;
+      modelImagePath = imagePath ?? modelImagePath;
+      modelSize = size ?? modelSize;
+      modelRam = ram ?? modelRam;
+      modelProducer = producer ?? modelProducer;
+      modelPath = path ?? modelPath;
+      isModelSelected = true;
+
+      if (isServerSideModel(modelTitle)) {
+        isModelLoaded = true;
+      } else {
+        isModelLoaded = false;
+        // Load the new model
+        loadModel();
+      }
+
+      // Reset the conversation
+      resetConversation();
+    });
+  }
+
+  // Handle model selection
+  void _selectModel(ModelInfo model) {
+    setState(() {
+      modelTitle = model.title;
+      modelDescription = model.description;
+      modelImagePath = model.imagePath;
+      modelSize = model.size;
+      modelRam = model.ram;
+      modelProducer = model.producer;
+      modelPath = model.path;
+
+      isModelSelected = true;
+    });
+
+    if (isServerSideModel(modelTitle)) {
+      setState(() {
+        isModelLoaded = true; // Server-side models are loaded via API
+      });
+    } else {
+      // Load the selected model
+      loadModel();
+    }
+  }
+
+  // Reset the conversation to initial state
   void resetConversation() {
     setState(() {
       messages.clear();
@@ -279,133 +540,676 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       conversationTitle = null;
       widget.conversationID = null;
       widget.conversationTitle = null;
-      suggestionsOpacity = 1.0;
-      additionalSuggestionsOpacity = 1.0;
-      logoOpacity = 1.0;
       isWaitingForResponse = false;
       _isSendButtonVisible = false;
+      responseStopped = false; // Reset the flag
     });
-    _suggestionsAnimationController.repeat();
-    _additionalSuggestionsAnimationController.repeat();
   }
 
-  // Fades out the suggestions and logo after sending a message
-  void _fadeOutSuggestionsAndLogo() {
-    setState(() {
-      suggestionsOpacity = 0.0; // Fade out suggestions
-      additionalSuggestionsOpacity = 0.0; // Fade out additional suggestions
-      logoOpacity = 0.0; // Fade out logo
-    });
-    _suggestionsAnimationController.stop();
-    _additionalSuggestionsAnimationController.stop();
-  }
-
-  // Handles text input changes to show/hide send button
-  void _onTextChanged(String text) {
-    setState(() => _isSendButtonVisible = text.isNotEmpty && !isWaitingForResponse);
-  }
-
-  // Handle suggestion tap to send the suggestion as a message
-  void _onSuggestionTap(String suggestion) => _sendMessage(suggestion);
-
-  // Save the conversation with a given name
+  // Save the conversation details
   Future<void> _saveConversation(String conversationName) async {
     final prefs = await SharedPreferences.getInstance();
     List<String> conversations = prefs.getStringList('conversations') ?? [];
 
-    String conversationEntry = '$conversationID:$conversationName';
+    String conversationEntry =
+        '$conversationID|$conversationName|$modelTitle|$modelImagePath|$modelDescription|$modelSize|$modelRam|$modelProducer|$modelPath';
 
-    // Prevent duplicate conversations
-    if (conversations.any((c) => c.startsWith('$conversationID:'))) return;
+    // Prevent saving duplicate conversations
+    if (conversations.any((c) => c.startsWith('$conversationID|'))) return;
 
     conversations.add(conversationEntry);
     await prefs.setStringList('conversations', conversations);
   }
 
-  // Load conversation when navigating from history
-  void loadConversation(String conversationID, String conversationTitle) {
-    setState(() {
-      widget.conversationID = conversationID;
-      widget.conversationTitle = conversationTitle;
-      this.conversationID = conversationID;
-      this.conversationTitle = conversationTitle;
-      messages.clear();
-      suggestionsOpacity = 0.0;
-      additionalSuggestionsOpacity = 0.0;
-      logoOpacity = 0.0;
-      _suggestionsAnimationController.stop();
-      _additionalSuggestionsAnimationController.stop();
-    });
-    _loadPreviousMessages(conversationID);
+  // Check if the user is at the bottom of the scroll view
+  bool _isUserAtBottom() {
+    if (!_scrollController.hasClients) return false;
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    final currentScroll = _scrollController.offset;
+    return (maxScroll - currentScroll) <=
+        50; // Consider within 50 pixels from the bottom
   }
 
-  // Update conversation title when edited from MenuScreen
-  void updateConversationTitle(String newTitle) {
-    setState(() {
-      conversationTitle = newTitle;
+  // Scroll function
+  void _scrollToBottom({bool forceScroll = false}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        if (forceScroll || _isUserAtBottom()) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        }
+      }
     });
   }
 
-  // Build method: creates UI elements for chat screen
+  // Manage input text changes to show/hide send button
+  void _onTextChanged(String text) {
+    setState(() =>
+    _isSendButtonVisible = text.isNotEmpty && !isWaitingForResponse);
+  }
+
+  // Manage message sending
+  void _sendMessage([String? textFromButton]) async {
+    String text = textFromButton ?? _controller.text.trim();
+
+    if (text.isNotEmpty) {
+      // Check if the message is appropriate
+      if (!_isMessageAppropriate(text)) {
+        // Show the inappropriate message warning
+        _showInappropriateMessageWarning;
+        return; // Do not proceed with sending the message
+      }
+
+      setState(() {
+        messages.add(
+            Message(text: text, isUserMessage: true)); // Add user message
+        _controller.clear(); // Clear input field
+        isWaitingForResponse = true; // Set waiting status
+        _isSendButtonVisible = false; // Hide send button
+
+        // Add empty model message to receive tokens
+        messages.add(Message(text: "", isUserMessage: false)); // Placeholder
+      });
+
+      if (conversationID == null) {
+        conversationID = uuid.v4(); // Generate conversation ID
+        conversationTitle = text; // Use first message as title
+        _saveConversationTitle(conversationTitle!); // Save title
+        _saveConversation(conversationTitle!); // Save conversation immediately
+
+        // Notify MenuScreen to reload conversations
+        mainScreenKey.currentState?.menuScreenKey.currentState
+            ?.reloadConversations();
+      }
+
+      // Save user's message
+      _saveMessageToConversation(text, true);
+
+      if (modelTitle == 'Gemini') {
+        // Use ApiService to get response from Gemini API
+        try {
+          String response = await apiService.getGeminiResponse(text);
+
+          // Display response with typewriter effect
+          _typeWriterEffect(response);
+        } catch (e) {
+          // Handle errors
+          setState(() {
+            isWaitingForResponse = false;
+            if (messages.isNotEmpty && !messages.last.isUserMessage) {
+              messages.last.text = 'Error: $e';
+            } else {
+              messages.add(Message(text: 'Error: $e', isUserMessage: false));
+            }
+          });
+        }
+      } else if (modelTitle == 'Llama3.2') {
+        // Use ApiService to get response from Llama3.2 API
+        try {
+          String response = await apiService.getLlamaResponse(text);
+
+          // Display response with typewriter effect
+          _typeWriterEffect(response);
+        } catch (e) {
+          // Handle errors
+          setState(() {
+            isWaitingForResponse = false;
+            if (messages.isNotEmpty && !messages.last.isUserMessage) {
+              messages.last.text = 'Error: $e';
+            } else {
+              messages.add(Message(text: 'Error: $e', isUserMessage: false));
+            }
+          });
+        }
+      } else if (modelTitle == 'Hermes') {
+        // Get response from Hermes API
+        try {
+          String response = await apiService.getHermesResponse(text);
+          _typeWriterEffect(response);
+        } catch (e) {
+          // Handle errors
+          setState(() {
+            isWaitingForResponse = false;
+            if (messages.isNotEmpty && !messages.last.isUserMessage) {
+              messages.last.text = 'Error: $e';
+            } else {
+              messages.add(Message(text: 'Error: $e', isUserMessage: false));
+            }
+          });
+        }
+      } else {
+        // Existing code for other models (if any)
+        llamaChannel.invokeMethod(
+            'sendMessage', {'message': text}); // Send message to model
+        _startResponseTimeout(); // Start response timer
+        _scrollToBottom(forceScroll: true); // Scroll to show new message
+      }
+    }
+  }
+
+  // Function to stop the ongoing response
+  void _stopResponse() {
+    if (isWaitingForResponse) {
+      setState(() {
+        responseStopped = true; // Set the flag to indicate stopping
+        isWaitingForResponse = false; // Update the waiting status
+        _isSendButtonVisible =
+            _controller.text.isNotEmpty; // Update send button visibility
+      });
+      responseTimer?.cancel();
+      _finalizeResponse();
+    }
+  }
+
+  // Typewriter effect for API responses
+  Future<void> _typeWriterEffect(String fullText) async {
+    int index = 0;
+    String buffer = '';
+    const int batchSize = 5; // Number of characters to add each time
+    const int delayDuration = 50; // Delay duration in milliseconds
+
+    while (index < fullText.length &&
+        isWaitingForResponse &&
+        !responseStopped) {
+      int endIndex = index + batchSize;
+      if (endIndex > fullText.length) endIndex = fullText.length;
+      buffer = fullText.substring(index, endIndex);
+      index = endIndex;
+
+      setState(() {
+        if (messages.isNotEmpty && !messages.last.isUserMessage) {
+          messages.last.text += buffer;
+        }
+      });
+
+      if (_isUserAtBottom()) {
+        _scrollToBottom();
+      }
+
+      await Future.delayed(Duration(milliseconds: delayDuration));
+    }
+
+    setState(() {
+      isWaitingForResponse = false;
+    });
+
+    // Save the response
+    _saveMessageToConversation(messages.last.text, false);
+
+    responseStopped = false; // Reset the flag
+    _scrollToBottom(forceScroll: true); // Scroll to bottom after completion
+  }
+
+  // Check if the message is appropriate
+// Check if the message is appropriate
+  bool _isMessageAppropriate(String text) {
+    List<String> inappropriateWords = [
+      'seks',
+      'sikiş',
+      'porno',
+      'yarak',
+      'pussy',
+      'yarrak',
+      'salak',
+      'aptal',
+      'orospu',
+      'göt',
+      'intihar',
+      'ölmek',
+      'çocuk pornosu',
+      'sex',
+      'amk',
+      'motherfucker',
+      'fuck',
+      'porn',
+      'child porn',
+      'suicide',
+      'sik',
+      'siksem',
+      'sikmek',
+      'sakso',
+      'blowjob',
+      'handjob',
+      'asshole'
+    ];
+
+    // Normalize the input text
+    final lowerText = text.toLowerCase();
+
+    for (var word in inappropriateWords) {
+      // Create a regex pattern with word boundaries
+      final pattern = RegExp(r'\b' + RegExp.escape(word) + r'\b');
+      if (pattern.hasMatch(lowerText)) {
+        setState(() {
+          _showInappropriateMessageWarning = true; // Show warning
+        });
+        _warningAnimationController.forward(); // Start the animation
+
+        // Hide the warning after 3 seconds
+        Future.delayed(Duration(seconds: 3), () {
+          setState(() {
+            _showInappropriateMessageWarning = false;
+          });
+          _warningAnimationController.reverse(); // Reverse the animation
+        });
+
+        return false; // Message is inappropriate
+      }
+    }
+    return true; // Message is appropriate
+  }
+
+  // Build method: Creates chat or model selection screen
   @override
   Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: Scaffold(
-        resizeToAvoidBottomInset: true,
-        appBar: _buildAppBar(context), // Build custom app bar
-        body: Stack(
-          children: [
-            Container(color: const Color(0xFF141414)), // Background color
-            _buildLogo(), // Show the logo
-            Column(
-              children: <Widget>[
-                Expanded(child: _buildMessagesList()), // Display the message list
-                _buildAdditionalSuggestionsBar(), // Display additional suggestions
-                _buildSuggestionsBar(), // Display main suggestions
-                _buildInputField(), // Display input field
+    final localizations = AppLocalizations.of(context)!; // Access localization
+    final _isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
+    return Scaffold(
+      appBar:
+      _buildAppBar(context, localizations, _isDarkTheme), // Custom app bar
+      body: Stack(
+        children: [
+          Container(
+            color: _isDarkTheme
+                ? const Color(0xFF090909)
+                : Colors.white, // Background color adjusted
+            child: Column(
+              children: [
+                // AnimatedSwitcher applies only to the changing content
+                Expanded(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 100),
+                    transitionBuilder:
+                        (Widget child, Animation<double> animation) {
+                      return FadeTransition(opacity: animation, child: child);
+                    },
+                    // Ensure same size by using Expanded
+                    child: isModelSelected
+                        ? Container(
+                      key: const ValueKey('chat'),
+                      child: _buildChatScreen(
+                          localizations, _isDarkTheme),
+                    )
+                        : Container(
+                      key: const ValueKey('selection'),
+                      child: _buildModelSelectionScreen(
+                          localizations, _isDarkTheme),
+                    ),
+                  ),
+                ),
               ],
             ),
-          ],
-        ),
+          ),
+          // Warning notification for inappropriate messages
+          // Warning notification for inappropriate messages
+          if (_showInappropriateMessageWarning)
+            Positioned(
+              bottom: MediaQuery.of(context).size.height * 0.09, // Alt kısımdan biraz yukarıda
+              left: MediaQuery.of(context).size.width * 0.1,
+              right: MediaQuery.of(context).size.width * 0.1,
+              child: SlideTransition(
+                position: _warningSlideAnimation,
+                child: FadeTransition(
+                  opacity: _warningFadeAnimation,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 12.0, horizontal: 20.0),
+                      decoration: BoxDecoration(
+                        color: Colors.red, // Red background
+                        borderRadius: BorderRadius.circular(8.0),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black26,
+                            blurRadius: 8,
+                            offset: Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: Text(
+                          localizations.inappropriateMessageWarning,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white, // White text
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
 
-// AppBar içinde ekran geçişlerini çağırırken yönü belirt
-  AppBar _buildAppBar(BuildContext context) {
+  // Build the model selection screen
+  Widget _buildModelSelectionScreen(
+      AppLocalizations localizations, bool _isDarkTheme) {
+    return _allModels.isNotEmpty
+        ? Column(
+      children: [
+        // Search bar
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: _buildSearchBar(localizations, _isDarkTheme),
+        ),
+        // Models grid or "No results found" message
+        Expanded(
+          child: _filteredModels.isNotEmpty
+              ? GridView.builder(
+            padding: const EdgeInsets.all(8.0),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3, // 3 models per row
+              crossAxisSpacing: 8.0,
+              mainAxisSpacing: 8.0,
+              childAspectRatio: 0.75, // Adjust as needed
+            ),
+            itemCount: _filteredModels.length,
+            itemBuilder: (context, index) {
+              final model = _filteredModels[index];
+
+              // Calculate animation interval
+              final start = index *
+                  _modelAnimationDelay /
+                  _modelAnimationController
+                      .duration!.inMilliseconds;
+              final end = start +
+                  _modelAnimationDuration.inMilliseconds /
+                      _modelAnimationController
+                          .duration!.inMilliseconds;
+              final animation = Tween<double>(begin: 0, end: 1)
+                  .animate(
+                CurvedAnimation(
+                  parent: _modelAnimationController,
+                  curve:
+                  Interval(start, end, curve: Curves.easeIn),
+                ),
+              );
+
+              String imagePath = model.imagePath;
+
+              return FadeTransition(
+                opacity: animation,
+                child: GestureDetector(
+                  onTap: () {
+                    _selectModel(model);
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: _isDarkTheme
+                          ? const Color(0xFF1B1B1B)
+                          : Colors.grey[200],
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black26,
+                          blurRadius: 4,
+                          offset: const Offset(2, 2),
+                        ),
+                      ],
+                      border: Border.all(
+                          color: _isDarkTheme
+                              ? Colors.grey[700]!
+                              : Colors.grey[300]!),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: ClipRRect(
+                            borderRadius:
+                            BorderRadius.circular(8.0),
+                            child: Image.asset(
+                              imagePath,
+                              height: 80,
+                              fit: BoxFit.contain,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8.0),
+                        Text(
+                          model.title,
+                          style: TextStyle(
+                            color: _isDarkTheme
+                                ? Colors.white
+                                : Colors.black,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 4.0),
+                        Text(
+                          model.producer,
+                          style: TextStyle(
+                            color: _isDarkTheme
+                                ? Colors.grey[400]
+                                : Colors.grey[600],
+                            fontSize: 12,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          )
+              : Center(
+            child: Text(
+              localizations.noMatchingModels,
+              style: TextStyle(
+                  color: _isDarkTheme
+                      ? Colors.white70
+                      : Colors.black54),
+            ),
+          ),
+        ),
+      ],
+    )
+        : Center(
+      child: Text(
+        localizations.noModelsDownloaded,
+        style: TextStyle(
+            color: _isDarkTheme ? Colors.white70 : Colors.black54),
+      ),
+    );
+  }
+
+  // Build the search bar
+  Widget _buildSearchBar(
+      AppLocalizations localizations, bool _isDarkTheme) {
+    return TextField(
+      decoration: InputDecoration(
+        hintText: localizations.searchHint,
+        hintStyle:
+        TextStyle(color: _isDarkTheme ? Colors.grey[400] : Colors.grey[600]),
+        prefixIcon: Icon(Icons.search,
+            color: _isDarkTheme ? Colors.white : Colors.black),
+        filled: true,
+        fillColor: _isDarkTheme ? Colors.grey[900] : Colors.grey[200],
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide:
+          BorderSide(color: _isDarkTheme ? Colors.white : Colors.black),
+        ),
+        contentPadding: EdgeInsets.zero,
+      ),
+      style: TextStyle(color: _isDarkTheme ? Colors.white : Colors.black),
+      onChanged: (value) {
+        setState(() {
+          _searchQuery = value.toLowerCase();
+          _filteredModels = _allModels.where((model) {
+            return model.title.toLowerCase().startsWith(_searchQuery);
+          }).toList();
+
+          // Update animation controller
+          _initializeModelAnimationController();
+        });
+      },
+    );
+  }
+
+  // Build the chat screen
+  Widget _buildChatScreen(
+      AppLocalizations localizations, bool _isDarkTheme) {
+    return Column(
+      children: [
+        Expanded(
+          child: messages.isEmpty
+              ? Center(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (modelImagePath != null)
+                    ClipRRect(
+                      borderRadius:
+                      BorderRadius.circular(15.0), // Soften edges
+                      child: Image.asset(
+                        modelImagePath!,
+                        height: 100,
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  const SizedBox(height: 16),
+                  if (modelTitle != null)
+                    Text(
+                      modelTitle!,
+                      style: GoogleFonts.poppins(
+                        fontSize: 20,
+                        color:
+                        _isDarkTheme ? Colors.white : Colors.black,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+          )
+              : _buildMessagesList(_isDarkTheme),
+        ),
+        _buildInputField(localizations, _isDarkTheme),
+      ],
+    );
+  }
+
+  // Build the AppBar
+  AppBar _buildAppBar(BuildContext context,
+      AppLocalizations localizations, bool _isDarkTheme) {
     return AppBar(
       toolbarHeight: 60,
-      backgroundColor: const Color(0xFF141414),
-      leading: IconButton(
-        icon: const Icon(Icons.more_vert, color: Colors.white),
-        onPressed: () => _navigateToScreen(context, InformationScreen(), isLeftToRight: true), // Soldan sağa
+      backgroundColor:
+      _isDarkTheme ? const Color(0xFF090909) : Colors.white,
+      centerTitle: true,
+      leading: isModelSelected
+          ? IconButton(
+        icon: Icon(Icons.arrow_back,
+            color: _isDarkTheme ? Colors.white : Colors.black),
+        onPressed: () {
+          setState(() {
+            isModelSelected = false;
+            modelTitle = null;
+            modelDescription = null;
+            modelImagePath = null;
+            modelSize = null;
+            modelRam = null;
+            modelProducer = null;
+            modelPath = null;
+            isModelLoaded = false;
+            resetConversation();
+          });
+        },
+      )
+          : IconButton(
+        icon: Container(
+          decoration: BoxDecoration(
+            color:
+            _isDarkTheme ? Colors.grey[900] : Colors.grey[300],
+            borderRadius: BorderRadius.circular(8.0),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Icon(Icons.auto_awesome,
+                color:
+                _isDarkTheme ? Colors.white : Colors.black,
+                size: 24),
+          ),
+        ),
+        onPressed: () => _navigateToPremiumScreen(context),
       ),
-      title: Center(child: _buildPremiumButton(context)), // Ortalanmış premium butonu
+      title: isModelSelected
+          ? Text(
+        conversationTitle ?? modelTitle ?? '',
+        style: TextStyle(
+            color: _isDarkTheme ? Colors.white : Colors.black),
+      )
+          : Text(
+        localizations.appTitle,
+        style: GoogleFonts.afacad(
+          color: _isDarkTheme ? Colors.white : Colors.black,
+          fontSize: 32,
+        ),
+      ), // Centered Vertex AI title with stylish font
       actions: <Widget>[
-        Padding(
-          padding: const EdgeInsets.only(right: 5.0),
-          child: GestureDetector(
-            onTap: () => _navigateToScreen(context, AccountScreen(), isLeftToRight: false), // Sağdan sola
-            child: Image.asset('assets/profile.png', height: 30, width: 36),
+        IconButton(
+          icon: Container(
+            decoration: BoxDecoration(
+              color: _isDarkTheme ? Colors.grey[900] : Colors.grey[300],
+              borderRadius: BorderRadius.circular(8.0),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Icon(Icons.person,
+                  color: _isDarkTheme ? Colors.white : Colors.black,
+                  size: 24),
+            ),
+          ),
+          onPressed: () => _navigateToScreen(
+            context,
+            AccountScreen(),
+            isLeftToRight: false, // From right to left
           ),
         ),
       ],
     );
   }
 
-// Tek bir fonksiyonla ekran geçişi yapıp yönü belirle
-  void _navigateToScreen(BuildContext context, Widget screen, {required bool isLeftToRight}) {
+  // Navigate to a specified screen with transition
+  void _navigateToScreen(BuildContext context, Widget screen,
+      {required bool isLeftToRight}) {
     Navigator.push(
       context,
       PageRouteBuilder(
         pageBuilder: (_, animation, __) => screen,
         transitionsBuilder: (_, animation, secondaryAnimation, child) {
-          Offset begin = isLeftToRight ? const Offset(-1.0, 0.0) : const Offset(1.0, 0.0);
+          Offset begin =
+          isLeftToRight ? const Offset(-1.0, 0.0) : const Offset(1.0, 0.0);
           const end = Offset.zero;
           const curve = Curves.ease;
 
-          var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+          var tween =
+          Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
 
           return SlideTransition(
             position: animation.drive(tween),
@@ -417,58 +1221,362 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-
-  // Build premium button in the AppBar
-  Widget _buildPremiumButton(BuildContext context) {
-    return TextButton(
-      onPressed: () => _navigateToPremiumScreen(context),
-      style: TextButton.styleFrom(
-        backgroundColor: const Color(0xFF2d2f2e),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
-      ),
-      child: const Text(
-        "Vertex Premium",
-        style: TextStyle(color: Colors.white, fontSize: 16),
-      ),
-    );
-  }
-
-  // Navigate to the PremiumScreen with fade transition
+  // Navigate to the Premium screen
   void _navigateToPremiumScreen(BuildContext context) {
     Navigator.push(
       context,
       PageRouteBuilder(
         pageBuilder: (_, animation, __) => PremiumScreen(),
-        transitionsBuilder: (_, animation, __, child) {
-          return FadeTransition(
-            opacity: animation,
+        transitionsBuilder: (_, animation, secondaryAnimation, child) {
+          const begin = Offset(-1.0, 0.0); // Starts from left
+          const end = Offset.zero; // Original position
+          const curve = Curves.ease;
+
+          var tween =
+          Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
             child: child,
           );
         },
-        transitionDuration: const Duration(milliseconds: 200),
+        transitionDuration: const Duration(milliseconds: 300),
       ),
     );
   }
 
-  // Modify the _buildLogo method to remove the Positioned widget since it's now inside a Stack
-  Widget _buildLogo() {
-    return Center(
-      child: AnimatedOpacity(
-        opacity: logoOpacity,
-        duration: const Duration(milliseconds: 200), // Reduced duration
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 160),
-          child: Column(
+  // Build the messages list
+  Widget _buildMessagesList(bool _isDarkTheme) {
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      itemCount: messages.length,
+      itemBuilder: (context, index) {
+        return _buildMessageTile(messages[index], _isDarkTheme); // Display message
+      },
+    );
+  }
+
+  // Build a single message tile with copy functionality and model image
+  Widget _buildMessageTile(Message message, bool _isDarkTheme) {
+    if (message.isUserMessage) {
+      // User messages
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5.0),
+        child: GestureDetector(
+          onLongPressStart: (details) {
+            _showMessageOptions(context, details.globalPosition, message.text);
+          },
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Transform.translate(
+              offset: const Offset(-5, 0),
+              child: Container(
+                constraints: BoxConstraints(
+                    maxWidth: MediaQuery.of(context).size.width * 0.7),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: _isDarkTheme
+                      ? const Color(0xFF292a2c)
+                      : Colors.grey[200], // Adjusted
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  message.text,
+                  style: TextStyle(
+                    color:
+                    _isDarkTheme ? Colors.white : Colors.black, // Adjusted
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    } else {
+      // AI messages
+      return AIMessageTile(
+        text: message.text,
+        imagePath: modelImagePath ?? '',
+        isDarkTheme: _isDarkTheme, // Pass the theme
+      );
+    }
+  }
+
+  // Show message options like copy on long press with fade-in effect
+  void _showMessageOptions(
+      BuildContext context, Offset tapPosition, String messageText) async {
+    final localizations = AppLocalizations.of(context)!;
+    final _isDarkTheme =
+        Provider.of<ThemeProvider>(context, listen: false).isDarkTheme;
+    final screenWidth = MediaQuery.of(context).size.width;
+    const menuWidth = 150.0; // Menu width
+
+    // Adjust the position if there's not enough space on the right
+    Offset adjustedPosition = tapPosition;
+    if (tapPosition.dx + menuWidth > screenWidth) {
+      adjustedPosition = Offset(screenWidth - menuWidth - 16.0, tapPosition.dy);
+    }
+
+    await showMenu(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        adjustedPosition.dx,
+        adjustedPosition.dy,
+        adjustedPosition.dx + menuWidth,
+        adjustedPosition.dy,
+      ),
+      items: [
+        PopupMenuItem<String>(
+          value: 'copy',
+          child: Row(
             children: [
-              Image.asset('assets/vertexailogodarkwhite.png', height: 80),
-              const SizedBox(height: 16),
+              Icon(Icons.copy,
+                  color: _isDarkTheme ? Colors.white : Colors.black),
+              const SizedBox(width: 10),
               Text(
-                'problemler çözümsüz \n            kalamaz.',
-                style: GoogleFonts.poppins(
-                  fontSize: 18,
-                  color: Colors.white,
-                  fontWeight: FontWeight.w400,
+                localizations.copy,
+                style: TextStyle(
+                    color: _isDarkTheme ? Colors.white : Colors.black),
+              ),
+            ],
+          ),
+        ),
+      ],
+      elevation: 8.0,
+      color: _isDarkTheme ? const Color(0xFF202020) : Colors.grey[200],
+    ).then((value) {
+      if (value == 'copy') {
+        Clipboard.setData(ClipboardData(text: messageText));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(localizations.messageCopied)),
+        );
+      }
+    });
+  }
+
+  // Build the input field for user messages
+  Widget _buildInputField(
+      AppLocalizations localizations, bool _isDarkTheme) {
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: isModelLoaded
+          ? TextField(
+        controller: _controller,
+        maxLength: 1000,
+        decoration: InputDecoration(
+          filled: true,
+          fillColor: _isDarkTheme
+              ? const Color(0xFF1B1B1B)
+              : Colors.grey[200], // Adjusted
+          counterText: '',
+          hintText: localizations.messageHint,
+          hintStyle: TextStyle(
+              color: _isDarkTheme ? Colors.grey[500] : Colors.grey[600]),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderSide: BorderSide(
+                color: _isDarkTheme ? Colors.white : Colors.black),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          suffixIcon: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            transitionBuilder:
+                (Widget child, Animation<double> animation) {
+              return ScaleTransition(scale: animation, child: child);
+            },
+            child: isWaitingForResponse
+                ? IconButton(
+              key: const ValueKey('stopButton'),
+              icon: Icon(
+                Icons.stop,
+                color: _isDarkTheme
+                    ? Colors.white
+                    : Colors.black, // Changed from red to white
+                size: 24,
+              ),
+              onPressed: _stopResponse,
+            )
+                : _isSendButtonVisible
+                ? IconButton(
+              key: const ValueKey('sendButton'),
+              icon: Icon(
+                Icons.arrow_upward,
+                color: _isDarkTheme
+                    ? Colors.white
+                    : Colors.black, // Adjusted
+                size: 22,
+              ),
+              onPressed:
+              _isSendButtonVisible ? _sendMessage : null,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(
+                minWidth: 24,
+                minHeight: 24,
+              ),
+            )
+                : const SizedBox(
+              key: ValueKey('empty'),
+            ),
+          ),
+        ),
+        style: TextStyle(
+            color: _isDarkTheme ? Colors.white : Colors.black),
+        onChanged: _onTextChanged,
+        onSubmitted: (text) {
+          if (!isWaitingForResponse) _sendMessage();
+        },
+        enabled: true, // Allow composing message even when waiting
+      )
+          : Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Text(
+          localizations.modelLoading,
+          style: TextStyle(
+              color: _isDarkTheme ? Colors.grey : Colors.black54),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose(); // Release input controller
+    responseTimer?.cancel(); // Cancel response timer
+    _scrollController.dispose(); // Release scroll controller
+    _modelAnimationController.dispose(); // Release animation controller
+    _warningAnimationController.dispose();
+    super.dispose();
+  }
+}
+
+// Updated AIMessageTile Widget
+class AIMessageTile extends StatefulWidget {
+  final String text;
+  final String imagePath;
+  final bool isDarkTheme;
+
+  const AIMessageTile(
+      {Key? key,
+        required this.text,
+        required this.imagePath,
+        required this.isDarkTheme})
+      : super(key: key);
+
+  @override
+  _AIMessageTileState createState() => _AIMessageTileState();
+}
+
+class _AIMessageTileState extends State<AIMessageTile>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 500), // Fade-in duration
+      vsync: this,
+    );
+    _animation = CurvedAnimation(parent: _controller, curve: Curves.easeIn);
+    _controller.forward(); // Start animation
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose(); // Dispose animation controller
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    String imagePath = widget.imagePath;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0), // More padding
+      child: GestureDetector(
+        onLongPressStart: (details) {
+          _showMessageOptions(context, details.globalPosition, widget.text);
+        },
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              FadeTransition(
+                opacity: _animation,
+                child: imagePath.isNotEmpty
+                    ? Padding(
+                  padding: const EdgeInsets.only(left: 12.0),
+                  child: ClipRRect(
+                    borderRadius:
+                    BorderRadius.circular(15.0), // Soften edges
+                    child: Image.asset(
+                      imagePath,
+                      width: 30, // Smaller size
+                      height: 30,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                )
+                    : Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: widget.isDarkTheme
+                        ? Colors.grey[700]
+                        : Colors.grey[300],
+                    borderRadius: BorderRadius.circular(15.0),
+                  ),
+                  child: Icon(
+                    Icons.person,
+                    color: widget.isDarkTheme
+                        ? Colors.white
+                        : Colors.black,
+                    size: 16,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16.0),
+              Expanded(
+                child: MarkdownBody(
+                  data: widget.text,
+                  styleSheet: MarkdownStyleSheet(
+                    p: TextStyle(
+                      color:
+                      widget.isDarkTheme ? Colors.white : Colors.black,
+                      fontSize: 16,
+                    ),
+                    code: TextStyle(
+                      color: widget.isDarkTheme
+                          ? Colors.orange
+                          : Colors.orange[800],
+                      backgroundColor: widget.isDarkTheme
+                          ? Colors.black54
+                          : Colors.grey[300],
+                    ),
+                    blockquote: TextStyle(
+                      color: widget.isDarkTheme
+                          ? Colors.white70
+                          : Colors.black87,
+                      fontStyle: FontStyle.italic,
+                    ),
+                    strong: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                    ),
+                    em: const TextStyle(
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -478,242 +1586,54 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  // Build the list of messages
-  Widget _buildMessagesList() {
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.all(8.0),
-      itemCount: messages.length,
-      itemBuilder: (context, index) {
-        return _buildMessageTile(messages[index]); // Display regular message
-      },
-    );
-  }
+  // Show message options (Copy) with fade-in effect
+  void _showMessageOptions(
+      BuildContext context, Offset tapPosition, String messageText) async {
+    final localizations = AppLocalizations.of(context)!;
+    final screenWidth = MediaQuery.of(context).size.width;
+    const menuWidth = 150.0; // Menu width
 
-  // Build a single message tile with long-press copy functionality
-  Widget _buildMessageTile(Message message) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: GestureDetector(
-        onLongPressStart: (details) {
-          _showMessageOptions(context, details.globalPosition, message);
-        },
-        child: Align(
-          alignment: message.isUserMessage ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.7),
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: message.isUserMessage ? const Color(0xFF292a2c) : const Color(0xFFdadee6),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              message.text,
-              style: TextStyle(
-                color: message.isUserMessage ? Colors.white : Colors.black,
-                fontSize: 16,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // Method to show message options (Copy)
-  void _showMessageOptions(BuildContext context, Offset tapPosition, Message message) async {
-    final RenderBox overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    // Adjust the position if there's not enough space on the right
+    Offset adjustedPosition = tapPosition;
+    if (tapPosition.dx + menuWidth > screenWidth) {
+      adjustedPosition = Offset(screenWidth - menuWidth - 16.0, tapPosition.dy);
+    }
 
     await showMenu(
       context: context,
-      position: RelativeRect.fromRect(
-        tapPosition & const Size(40, 40), // Menü pozisyonu
-        Offset.zero & overlay.size, // Overlay boyutu
-      ),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12.0), // Köşeleri yuvarla
+      position: RelativeRect.fromLTRB(
+        adjustedPosition.dx,
+        adjustedPosition.dy,
+        adjustedPosition.dx + menuWidth,
+        adjustedPosition.dy,
       ),
       items: [
         PopupMenuItem<String>(
           value: 'copy',
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF202020), // Arka plan rengini değiştir
-              borderRadius: BorderRadius.circular(8.0), // Köşeleri yuvarla
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-            child: Row(
-              children: const [
-                Icon(Icons.copy, color: Colors.white), // Kopyalama ikonu
-                SizedBox(width: 10), // İkon ve metin arasında boşluk
-                Text(
-                  'Kopyala',
-                  style: TextStyle(color: Colors.white), // Metin rengi beyaz
-                ),
-              ],
-            ),
+          child: Row(
+            children: [
+              Icon(Icons.copy,
+                  color: widget.isDarkTheme ? Colors.white : Colors.black),
+              const SizedBox(width: 10),
+              Text(
+                localizations.copy,
+                style: TextStyle(
+                    color:
+                    widget.isDarkTheme ? Colors.white : Colors.black),
+              ),
+            ],
           ),
         ),
-        // Gelecekte daha fazla seçenek eklemek isterseniz, buraya ekleyebilirsiniz
       ],
-      elevation: 0.0, // Gölgeyi kaldır
-      color: Colors.transparent, // Menü arka planını şeffaf yap
+      elevation: 8.0,
+      color: widget.isDarkTheme ? const Color(0xFF202020) : Colors.grey[200],
     ).then((value) {
       if (value == 'copy') {
-        Clipboard.setData(ClipboardData(text: message.text));
+        Clipboard.setData(ClipboardData(text: messageText));
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Mesaj panoya kopyalandı')),
+          SnackBar(content: Text(localizations.messageCopied)),
         );
       }
     });
-  }
-
-
-  // Build the additional suggestions bar
-  Widget _buildAdditionalSuggestionsBar() {
-    return AnimatedOpacity(
-      opacity: additionalSuggestionsOpacity,
-      duration: const Duration(milliseconds: 200), // Reduced duration
-      child: additionalSuggestionsOpacity > 0.0
-          ? _buildSuggestionsRow(additionalSuggestions, _additionalSuggestionsScrollController, isTopPanel: true)
-          : const SizedBox.shrink(),
-    );
-  }
-
-  // Build the main suggestions bar
-  Widget _buildSuggestionsBar() {
-    return AnimatedOpacity(
-      opacity: suggestionsOpacity,
-      duration: const Duration(milliseconds: 200), // Reduced duration
-      child: suggestionsOpacity > 0.0
-          ? _buildSuggestionsRow(suggestions, _suggestionsScrollController)
-          : const SizedBox.shrink(),
-    );
-  }
-
-  // Build a row of suggestion buttons with enhanced gesture detection
-  Widget _buildSuggestionsRow(List<String> suggestions, ScrollController scrollController,
-      {bool isTopPanel = false}) {
-    return SizedBox(
-      height: 50,
-      child: NotificationListener<UserScrollNotification>(
-        onNotification: (notification) {
-          // Pause animations when user interacts with the panel
-          _pauseAnimations();
-          return true;
-        },
-        child: SingleChildScrollView(
-          controller: scrollController,
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: suggestions.map(_buildSuggestionButton).toList(),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // Build individual suggestion button
-  Widget _buildSuggestionButton(String suggestion) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4.0),
-      child: ElevatedButton(
-        onPressed: () => _onSuggestionTap(suggestion), // Send suggestion as a message
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF292a2c),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
-        ),
-        child: Text(suggestion, style: const TextStyle(color: Colors.white)),
-      ),
-    );
-  }
-
-  // Build input field for user to type messages
-  Widget _buildInputField() {
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: isModelLoaded
-          ? TextField(
-        controller: _controller,
-        maxLength: 1000,
-        decoration: InputDecoration(
-          counterText: '',
-          hintText: 'Mesajınızı yazın...',
-          hintStyle: TextStyle(color: Colors.grey[500]),
-          border: const OutlineInputBorder(),
-          enabledBorder: OutlineInputBorder(
-            borderSide: const BorderSide(color: Colors.grey),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderSide: const BorderSide(color: Colors.white),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          suffixIcon: AnimatedOpacity(
-            opacity: _isSendButtonVisible ? 1.0 : 0.0,
-            duration: const Duration(milliseconds: 300),
-            child: IconButton(
-              icon: const Icon(Icons.arrow_upward, color: Colors.white),
-              onPressed: _isSendButtonVisible ? _sendMessage : null,
-            ),
-          ),
-        ),
-        onChanged: _onTextChanged,
-        onSubmitted: (text) {
-          if (!isWaitingForResponse) _sendMessage();
-        },
-        enabled: !isWaitingForResponse, // Disable input when waiting for model response
-      )
-          : const Padding(
-        padding: EdgeInsets.all(16.0),
-        child: Text(
-          'Konuşmak için bir model seçmen gerek, ayarlar ekranından yapabilirsin!',
-          style: TextStyle(color: Colors.grey),
-        ),
-      ),
-    );
-  }
-
-  // Scroll to the bottom of the ListView
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
-  }
-
-  // Pause both suggestion animations
-  void _pauseAnimations() {
-    if (_suggestionsAnimationController.isAnimating) {
-      _suggestionsAnimationController.stop();
-    }
-    if (_additionalSuggestionsAnimationController.isAnimating) {
-      _additionalSuggestionsAnimationController.stop();
-    }
-    setState(() {
-      suggestionsOpacity = 1.0; // Optionally, you can adjust opacity if needed
-      additionalSuggestionsOpacity = 1.0; // Optionally, you can adjust opacity if needed
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose(); // Dispose of the input controller
-    responseTimer?.cancel(); // Cancel the response timer
-    _scrollController.dispose(); // Dispose of the scroll controller
-
-    _suggestionsAnimationController.dispose();
-    _additionalSuggestionsAnimationController.dispose();
-    _suggestionsScrollController.dispose();
-    _additionalSuggestionsScrollController.dispose();
-
-    _fadeAnimationController.dispose(); // Dispose of the fade animation controller
-
-    super.dispose();
   }
 }

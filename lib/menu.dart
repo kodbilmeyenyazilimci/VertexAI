@@ -1,8 +1,38 @@
+// menu.dart
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart'; // Import Google Fonts
+import 'package:google_fonts/google_fonts.dart'; // Google Fonts import
 import 'package:shared_preferences/shared_preferences.dart';
-import 'chat.dart'; // Ensure you have this import to access ChatScreen
-import 'main.dart'; // Import main.dart to access mainScreenKey
+import 'data.dart';
+import 'main.dart'; // To access mainScreenKey
+import 'package:flutter_gen/gen_l10n/app_localizations.dart'; // Import localization
+import 'package:provider/provider.dart'; // Import Provider
+import 'theme.dart'; // Import ThemeProvider
+
+class ConversationData {
+  final String conversationID;
+  String conversationTitle;
+  final String modelTitle;
+  final String modelImagePath;
+  final String modelDescription;
+  final String modelSize;
+  final String modelRam;
+  final String modelProducer;
+  final String modelPath;
+  final bool isModelAvailable; // Indicates if the model is available
+
+  ConversationData({
+    required this.conversationID,
+    required this.conversationTitle,
+    required this.modelTitle,
+    required this.modelImagePath,
+    required this.modelDescription,
+    required this.modelSize,
+    required this.modelRam,
+    required this.modelProducer,
+    required this.modelPath,
+    required this.isModelAvailable,
+  });
+}
 
 class MenuScreen extends StatefulWidget {
   const MenuScreen({super.key});
@@ -11,13 +41,13 @@ class MenuScreen extends StatefulWidget {
   MenuScreenState createState() => MenuScreenState();
 }
 
-class MenuScreenState extends State<MenuScreen> with SingleTickerProviderStateMixin {
+class MenuScreenState extends State<MenuScreen>
+    with SingleTickerProviderStateMixin {
   final GlobalKey<AnimatedListState> _listKey = GlobalKey<AnimatedListState>();
-  final List<String> _conversations = []; // Maintain local state of conversations
-  final List<String> _conversationIDs = []; // Store conversation IDs
-  final List<bool> _fadeInFlags = []; // Track fade-in state of each conversation
-  bool _isLoading = true; // To track loading state
-  bool _fadeOutLoadingAnimation = false; // To trigger fade-out of loading animation
+  final List<ConversationData> _conversationsData = []; // List of conversations
+  final List<bool> _fadeInFlags = []; // Fade-in state for each conversation
+  bool _isLoading = true; // Loading state
+  bool _fadeOutLoadingAnimation = false; // Trigger for fade-out loading animation
 
   late final AnimationController _fadeAnimationController;
   late Animation<double> _fadeAnimation;
@@ -48,15 +78,37 @@ class MenuScreenState extends State<MenuScreen> with SingleTickerProviderStateMi
     if (conversations != null) {
       for (int i = 0; i < conversations.length; i++) {
         String conversationEntry = conversations[i];
-        List<String> parts = conversationEntry.split(':');
-        if (parts.length >= 2) {
+        List<String> parts = conversationEntry.split('|');
+        if (parts.length >= 9) {
           String convID = parts[0];
-          String convTitle = parts.sublist(1).join(':'); // Handle titles with colons
-          _conversations.add(convTitle);
-          _conversationIDs.add(convID);
+          String convTitle = parts[1];
+          String modelTitle = parts[2];
+          String modelImagePath = parts[3];
+          String modelDescription = parts[4];
+          String modelSize = parts[5];
+          String modelRam = parts[6];
+          String modelProducer = parts[7];
+          String modelPath = parts[8];
+
+          // Check if the model is available
+          bool isModelAvailable = await _isModelAvailable(modelTitle);
+
+          _conversationsData.add(ConversationData(
+            conversationID: convID,
+            conversationTitle: convTitle,
+            modelTitle: modelTitle,
+            modelImagePath: modelImagePath,
+            modelDescription: modelDescription,
+            modelSize: modelSize,
+            modelRam: modelRam,
+            modelProducer: modelProducer,
+            modelPath: modelPath,
+            isModelAvailable: isModelAvailable,
+          ));
           _fadeInFlags.add(false); // Initially, all conversations are not faded in
-          // Insert each item into the AnimatedList with a slight delay for animation
-          _listKey.currentState?.insertItem(i, duration: const Duration(milliseconds: 300));
+          // Add each item to the animated list
+          _listKey.currentState?.insertItem(i,
+              duration: const Duration(milliseconds: 300));
           await Future.delayed(const Duration(milliseconds: 100));
         }
       }
@@ -68,21 +120,42 @@ class MenuScreenState extends State<MenuScreen> with SingleTickerProviderStateMi
     _triggerFadeOutLoadingAnimation(); // Trigger fade-out of loading animation
   }
 
+  // Function to check if a model is available
+  Future<bool> _isModelAvailable(String modelTitle) async {
+    // Get the list of models
+    List<Map<String, dynamic>> models = ModelData.models(context);
+
+    // Find the model by title
+    Map<String, dynamic>? model = models.firstWhere(
+          (model) => model['title'] == modelTitle,
+      orElse: () => {},
+    );
+
+    // If model not found, consider it unavailable
+    if (model == null || model.isEmpty) return false;
+
+    // If the model is server-side, consider it available
+    if (model['isServerSide'] == true) return true;
+
+    // If the model is local, check if it's downloaded
+    final prefs = await SharedPreferences.getInstance();
+    final isDownloaded = prefs.getBool('is_downloaded_$modelTitle') ?? false;
+    return isDownloaded;
+  }
+
   // Function to reload conversations when notified from ChatScreen
   Future<void> reloadConversations() async {
     setState(() {
       _isLoading = true;
     });
-    _conversations.clear();
-    _conversationIDs.clear();
+    _conversationsData.clear();
     _fadeInFlags.clear();
-    // Removed incorrect _listKey.currentState?.setState(() {});
     await _loadConversations();
   }
 
   // Function to trigger fade-in effect for all conversations
   Future<void> _triggerFadeInEffect() async {
-    for (int i = 0; i < _conversations.length; i++) {
+    for (int i = 0; i < _conversationsData.length; i++) {
       await Future.delayed(const Duration(milliseconds: 100));
       if (mounted) {
         setState(() {
@@ -92,15 +165,15 @@ class MenuScreenState extends State<MenuScreen> with SingleTickerProviderStateMi
     }
   }
 
-  // Function to trigger fade-out effect for loading animation
+  // Function to trigger fade-out effect for the loading animation
   Future<void> _triggerFadeOutLoadingAnimation() async {
-    await Future.delayed(const Duration(milliseconds: 200)); // Reduced duration
+    await Future.delayed(const Duration(milliseconds: 200));
     if (mounted) {
       setState(() {
         _fadeOutLoadingAnimation = true;
       });
     }
-    await Future.delayed(const Duration(milliseconds: 200)); // Reduced duration
+    await Future.delayed(const Duration(milliseconds: 200));
     if (mounted) {
       setState(() {
         _isLoading = false;
@@ -108,33 +181,35 @@ class MenuScreenState extends State<MenuScreen> with SingleTickerProviderStateMi
     }
   }
 
+  // Function to delete a conversation
   Future<void> _deleteConversation(BuildContext context, int index) async {
-    if (_listKey.currentState == null || index < 0 || index >= _conversations.length) {
+    if (_listKey.currentState == null ||
+        index < 0 ||
+        index >= _conversationsData.length) {
       return;
     }
 
     final prefs = await SharedPreferences.getInstance();
 
-    // Capture the data before removing
-    final String deletedConversation = _conversations[index];
-    final String deletedConversationID = _conversationIDs[index];
+    // Capture data before deletion
+    final ConversationData deletedConversationData = _conversationsData[index];
     final bool deletedFadeInFlag = _fadeInFlags[index];
 
-    // Remove from SharedPreferences first
+    // Remove from SharedPreferences
     List<String> conversations = prefs.getStringList('conversations') ?? [];
     if (index < conversations.length) {
       conversations.removeAt(index);
       await prefs.setStringList('conversations', conversations); // Update SharedPreferences
     }
 
-    // Also remove messages associated with the conversation
-    await prefs.remove(deletedConversationID);
+    // Remove associated messages
+    await prefs.remove(deletedConversationData.conversationID);
 
-    // Remove from AnimatedList first
+    // Remove from AnimatedList with animation
     _listKey.currentState?.removeItem(
       index,
           (context, animation) => _buildConversationTile(
-        deletedConversation,
+        deletedConversationData,
         index,
         animation,
         fadeInFlag: deletedFadeInFlag,
@@ -142,89 +217,93 @@ class MenuScreenState extends State<MenuScreen> with SingleTickerProviderStateMi
       duration: const Duration(milliseconds: 300),
     );
 
-    // Now remove from local lists
-    _conversations.removeAt(index); // Remove from local list
-    _conversationIDs.removeAt(index); // Remove conversation ID
-    _fadeInFlags.removeAt(index); // Remove fade-in flag
+    // Remove from local lists
+    _conversationsData.removeAt(index);
+    _fadeInFlags.removeAt(index);
 
-    // After removing, check if the deleted conversation was open in the chat screen
-    if (mainScreenKey.currentState?.chatScreenKey.currentState?.conversationID == deletedConversationID) {
-      // Only reset the conversation without changing the screen
-      mainScreenKey.currentState?.chatScreenKey.currentState?.resetConversation();
+    // If the deleted conversation is currently open in ChatScreen, reset it
+    if (mainScreenKey.currentState?.chatScreenKey.currentState
+        ?.conversationID ==
+        deletedConversationData.conversationID) {
+      mainScreenKey.currentState?.chatScreenKey.currentState
+          ?.resetConversation();
     }
 
-    // Delay setState to avoid accessing an invalid index after deletion
+    // Wait for the removal animation to complete
     await Future.delayed(const Duration(milliseconds: 300));
 
     if (mounted) {
       setState(() {});
     }
-
-    // Show SnackBar to notify user of deletion
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Sohbet silindi.'),
-        backgroundColor: Color(0xFF2d2f2e), // SnackBar background color
-      ),
-    );
   }
 
-  // Function to edit a conversation title
-  Future<void> _editConversation(BuildContext context, int index, String newTitle) async {
-    if (index < 0 || index >= _conversations.length) return;
+  // Function to edit a conversation's title
+  Future<void> _editConversation(
+      BuildContext context, int index, String newTitle) async {
+    if (index < 0 || index >= _conversationsData.length) return;
 
     final prefs = await SharedPreferences.getInstance();
-    _conversations[index] = newTitle; // Update local list
+    _conversationsData[index].conversationTitle = newTitle; // Update local list
 
     List<String> conversations = prefs.getStringList('conversations') ?? [];
     if (index < conversations.length) {
-      String conversationID = _conversationIDs[index];
-      String newEntry = '$conversationID:$newTitle';
+      String conversationID = _conversationsData[index].conversationID;
+      String modelTitle = _conversationsData[index].modelTitle;
+      String modelImagePath = _conversationsData[index].modelImagePath;
+      String modelDescription = _conversationsData[index].modelDescription;
+      String modelSize = _conversationsData[index].modelSize;
+      String modelRam = _conversationsData[index].modelRam;
+      String modelProducer = _conversationsData[index].modelProducer;
+      String modelPath = _conversationsData[index].modelPath;
+
+      String newEntry =
+          '$conversationID|$newTitle|$modelTitle|$modelImagePath|$modelDescription|$modelSize|$modelRam|$modelProducer|$modelPath';
       conversations[index] = newEntry; // Update the entry
       await prefs.setStringList('conversations', conversations); // Update SharedPreferences
     }
 
-    // Update the chat screen's conversationTitle if needed
+    // If the conversation is currently open in ChatScreen, update its title
     if (mainScreenKey.currentState?.chatScreenKey.currentState?.conversationID ==
-        _conversationIDs[index]) {
-      mainScreenKey.currentState?.chatScreenKey.currentState?.updateConversationTitle(newTitle);
+        _conversationsData[index].conversationID) {
+      mainScreenKey.currentState?.chatScreenKey.currentState
+          ?.updateConversationTitle(newTitle);
     }
 
     setState(() {});
 
-    // Show SnackBar to notify user of update
+    // **Bildirim kaldırıldı**
+    /*
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Sohbet güncellendi.'),
-        backgroundColor: Color(0xFF2d2f2e), // SnackBar background color
+      SnackBar(
+        content: Text(AppLocalizations.of(context)!.conversationUpdated),
+        backgroundColor: const Color(0xFF2d2f2e),
       ),
     );
+    */
   }
 
-  // Function to build a conversation tile with animation
-  Widget _buildConversationTile(String conversation, int index, Animation<double> animation,
+  // Function to build a conversation tile with animations
+  Widget _buildConversationTile(ConversationData conversationData, int index,
+      Animation<double> animation,
       {bool fadeInFlag = true}) {
     return SizeTransition(
-      sizeFactor: animation, // Use animation to control the size of the tile
+      sizeFactor: animation, // Control the size of the tile with animation
       child: AnimatedOpacity(
         opacity: fadeInFlag ? 1.0 : 0.0, // Control opacity for fade-in effect
-        duration: const Duration(milliseconds: 200), // Reduced duration
+        duration: const Duration(milliseconds: 200),
         child: ConversationTile(
-          key: ValueKey(conversation), // Assign a unique key
-          conversation: conversation,
-          conversationID: _conversationIDs.length > index ? _conversationIDs[index] : '',
+          key: ValueKey(conversationData.conversationID),
+          conversationData: conversationData,
           onDelete: () {
-            // Ensure index is valid before attempting to delete
-            if (index >= 0 && index < _conversations.length) {
+            if (index >= 0 && index < _conversationsData.length) {
               _deleteConversation(context, index);
             }
-          }, // Delete conversation when delete is pressed
+          },
           onEdit: (newTitle) {
-            // Ensure index is valid before attempting to edit
-            if (index >= 0 && index < _conversations.length) {
+            if (index >= 0 && index < _conversationsData.length) {
               _editConversation(context, index, newTitle);
             }
-          }, // Edit conversation when edit is pressed
+          },
         ),
       ),
     );
@@ -232,67 +311,78 @@ class MenuScreenState extends State<MenuScreen> with SingleTickerProviderStateMi
 
   @override
   void dispose() {
-    _fadeAnimationController.dispose(); // Dispose fade animation controller
+    _fadeAnimationController.dispose(); // Dispose the fade animation controller
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final localizations = AppLocalizations.of(context)!;
+    final _isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
+
     return FadeTransition(
       opacity: _fadeAnimation,
       child: GestureDetector(
         onTap: () {
-          // Dismiss the SnackBar when tapping anywhere on the screen
+          // Hide any active SnackBar when tapping anywhere on the screen
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
         },
         child: Scaffold(
           appBar: AppBar(
-            title: const Text(
-              'Sohbetler',
+            title: Text(
+              localizations.conversationsTitle,
               style: TextStyle(
                 fontFamily: 'Roboto',
-                color: Colors.white,
+                color: _isDarkTheme ? Colors.white : Colors.black,
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
               ),
             ),
-            backgroundColor: const Color(0xFF141414),
-            elevation: 0, // No shadow effect
+            backgroundColor:
+            _isDarkTheme ? const Color(0xFF090909) : Colors.white,
+            elevation: 0,
             actions: [
               IconButton(
-                icon: const Icon(Icons.add, color: Colors.white),
+                icon: Icon(Icons.add,
+                    color: _isDarkTheme ? Colors.white : Colors.black),
                 onPressed: () {
-                  // Start a new conversation with fade transition
-                  mainScreenKey.currentState?.startNewConversation();
+                  // Navigate to the ChatScreen directly
+                  mainScreenKey.currentState?.onItemTapped(0);
+                  // Hide any active SnackBar
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
                 },
               ),
             ],
           ),
-          backgroundColor: const Color(0xFF141414),
+          backgroundColor: _isDarkTheme ? const Color(0xFF090909) : Colors.white,
           body: _isLoading
               ? Center(
             child: AnimatedOpacity(
               opacity: _fadeOutLoadingAnimation ? 0.0 : 1.0,
-              duration: const Duration(milliseconds: 200), // Reduced duration
-              child: const FadeTransitionWidget(), // Custom widget for loading animation
+              duration: const Duration(milliseconds: 200),
+              child:
+              const FadeTransitionWidget(), // Loading animation
             ),
           )
-              : _conversations.isEmpty
-              ? const Center(
+              : _conversationsData.isEmpty
+              ? Center(
             child: Text(
-              'Sohbet yok, sohbet et!',
-              style: TextStyle(color: Colors.white, fontSize: 24),
+              localizations.noConversationsMessage,
+              style: TextStyle(
+                color: _isDarkTheme ? Colors.white : Colors.black,
+                fontSize: 24,
+              ),
             ),
           )
               : AnimatedList(
             key: _listKey,
-            initialItemCount: _conversations.length,
+            initialItemCount: _conversationsData.length,
             itemBuilder: (context, index, animation) {
-              // Ensure index is valid
-              if (index < 0 || index >= _conversations.length) {
+              if (index < 0 || index >= _conversationsData.length) {
                 return const SizedBox.shrink();
               }
-              return _buildConversationTile(_conversations[index], index, animation);
+              return _buildConversationTile(
+                  _conversationsData[index], index, animation);
             },
           ),
         ),
@@ -317,11 +407,12 @@ class _FadeTransitionWidgetState extends State<FadeTransitionWidget>
   void initState() {
     super.initState();
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 200), // Reduced duration
+      duration: const Duration(milliseconds: 200),
       vsync: this,
     )..repeat(reverse: true);
 
-    _animation = CurvedAnimation(parent: _controller, curve: Curves.easeInOut);
+    _animation =
+        CurvedAnimation(parent: _controller, curve: Curves.easeInOut);
   }
 
   @override
@@ -332,10 +423,13 @@ class _FadeTransitionWidgetState extends State<FadeTransitionWidget>
 
   @override
   Widget build(BuildContext context) {
+    final _isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
     return FadeTransition(
       opacity: _animation,
       child: Image.asset(
-        'assets/vertexailogodarkwhite.png',
+        _isDarkTheme
+            ? 'assets/vertexailogodarkwhite.png'
+            : 'assets/vertexailogo.png',
         width: 100,
         height: 100,
       ),
@@ -344,15 +438,13 @@ class _FadeTransitionWidgetState extends State<FadeTransitionWidget>
 }
 
 class ConversationTile extends StatefulWidget {
-  final String conversation; // Holds the conversation title
-  final String conversationID; // Holds the conversation ID
-  final VoidCallback onDelete; // Callback for deleting the conversation
-  final ValueChanged<String> onEdit; // Callback for editing the conversation
+  final ConversationData conversationData; // Conversation data
+  final VoidCallback onDelete; // Callback to delete conversation
+  final ValueChanged<String> onEdit; // Callback to edit conversation
 
   const ConversationTile({
     super.key,
-    required this.conversation,
-    required this.conversationID,
+    required this.conversationData,
     required this.onDelete,
     required this.onEdit,
   });
@@ -364,7 +456,6 @@ class ConversationTile extends StatefulWidget {
 class _ConversationTileState extends State<ConversationTile>
     with SingleTickerProviderStateMixin {
   bool _isVisible = true; // Controls the visibility of the tile
-  String _displayedText = ''; // Stores the text to display in the tile
 
   late AnimationController _dialogAnimationController;
   late Animation<double> _dialogAnimation;
@@ -372,9 +463,8 @@ class _ConversationTileState extends State<ConversationTile>
   @override
   void initState() {
     super.initState();
-    _displayedText = widget.conversation; // Initialize displayed text with the conversation title
 
-    // Initialize animation controller for dialog
+    // Dialog animation controller
     _dialogAnimationController = AnimationController(
       duration: const Duration(milliseconds: 200),
       vsync: this,
@@ -388,35 +478,65 @@ class _ConversationTileState extends State<ConversationTile>
 
   @override
   void dispose() {
-    _dialogAnimationController.dispose(); // Dispose of the dialog animation controller
+    _dialogAnimationController.dispose(); // Dispose the animation controller
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final _isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
+    double opacityValue = _isVisible
+        ? (widget.conversationData.isModelAvailable ? 1.0 : 0.5)
+        : 0.0;
+
     return AnimatedOpacity(
-      opacity: _isVisible ? 1.0 : 0.0, // Control opacity for fade in/out effect
-      duration: const Duration(milliseconds: 200), // Duration of the fade animation
+      opacity: opacityValue,
+      duration: const Duration(milliseconds: 200),
       child: ListTile(
+        leading: widget.conversationData.modelImagePath.isNotEmpty
+            ? Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            image: DecorationImage(
+              image: AssetImage(widget.conversationData.modelImagePath),
+              fit: BoxFit.cover,
+            ),
+          ),
+        )
+            : null,
         title: Text(
-          _displayedText,
+          widget.conversationData.conversationTitle,
           style: GoogleFonts.poppins(
-            color: Colors.white,
-            fontWeight: FontWeight.w400, // Use Poppins font with weight 400
+            color: _isDarkTheme ? Colors.white : Colors.black,
+            fontWeight: FontWeight.w500, // Using Poppins font
+          ),
+        ),
+        subtitle: Text(
+          widget.conversationData.modelTitle,
+          style: GoogleFonts.poppins(
+            color: _isDarkTheme ? Colors.grey[400] : Colors.grey[600],
+            fontWeight: FontWeight.w400,
           ),
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _buildIconButton(Icons.edit, Colors.white, () => _showEditDialog(context)),
+            _buildIconButton(
+                Icons.edit,
+                _isDarkTheme ? Colors.white : Colors.black,
+                    () => _showEditDialog(context)),
             _buildIconButton(Icons.delete, Colors.red, () {
               _deleteWithAnimation(); // Start delete animation
             }),
           ],
         ),
-        onTap: () {
-          _navigateToChatScreen(context, widget.conversationID, widget.conversation);
-        },
+        onTap: widget.conversationData.isModelAvailable
+            ? () {
+          _navigateToChatScreen(context, widget.conversationData);
+        }
+            : null,
       ),
     );
   }
@@ -428,17 +548,19 @@ class _ConversationTileState extends State<ConversationTile>
 
     Future.delayed(const Duration(milliseconds: 200), () {
       if (mounted) {
-        widget.onDelete(); // Call the delete method after fade out
+        widget.onDelete(); // Perform deletion after fade out
       }
     });
   }
 
-  void _navigateToChatScreen(BuildContext context, String conversationID, String conversationTitle) {
-    // Switch to the ChatScreen and load the conversation
-    mainScreenKey.currentState?.openConversation(conversationID, conversationTitle);
+  void _navigateToChatScreen(
+      BuildContext context, ConversationData conversationData) {
+    // Navigate to ChatScreen and load the conversation
+    mainScreenKey.currentState?.openConversation(conversationData);
   }
 
-  Widget _buildIconButton(IconData icon, Color color, VoidCallback onPressed) {
+  Widget _buildIconButton(
+      IconData icon, Color color, VoidCallback onPressed) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 4.0),
       child: IconButton(
@@ -451,38 +573,49 @@ class _ConversationTileState extends State<ConversationTile>
   }
 
   void _showEditDialog(BuildContext context) {
-    final TextEditingController controller = TextEditingController(text: widget.conversation);
+    final TextEditingController controller =
+    TextEditingController(text: widget.conversationData.conversationTitle);
 
     _dialogAnimationController.forward();
 
     showDialog(
       context: context,
       builder: (context) {
+        final _isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
         return FadeTransition(
           opacity: _dialogAnimation,
           child: AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-            backgroundColor: const Color(0xFF2D2F2E),
-            title: const Text(
-              'Sohbet Başlığını Düzenle',
-              style: TextStyle(color: Colors.white),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12.0)),
+            backgroundColor:
+            _isDarkTheme ? const Color(0xFF2D2F2E) : Colors.grey[200],
+            title: Text(
+              AppLocalizations.of(context)!.editConversationTitle,
+              style: TextStyle(
+                color: _isDarkTheme ? Colors.white : Colors.black,
+              ),
             ),
             content: TextField(
               controller: controller,
-              decoration: const InputDecoration(
-                labelText: 'Yeni Başlık',
-                labelStyle: TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: AppLocalizations.of(context)!.newTitle,
+                labelStyle: TextStyle(
+                  color: _isDarkTheme ? Colors.white : Colors.black,
+                ),
                 focusedBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: Colors.white),
+                  borderSide: BorderSide(
+                      color: _isDarkTheme ? Colors.white : Colors.black),
                 ),
                 enabledBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: Colors.white),
+                  borderSide: BorderSide(
+                      color: _isDarkTheme ? Colors.white : Colors.black),
                 ),
               ),
-              style: const TextStyle(color: Colors.white),
-              cursorColor: Colors.white,
+              style: TextStyle(color: _isDarkTheme ? Colors.white : Colors.black),
+              cursorColor: _isDarkTheme ? Colors.white : Colors.black,
               onTap: () {
-                controller.selection = TextSelection.fromPosition(TextPosition(offset: controller.text.length));
+                controller.selection = TextSelection.fromPosition(
+                    TextPosition(offset: controller.text.length));
               },
             ),
             actions: [
@@ -491,18 +624,16 @@ class _ConversationTileState extends State<ConversationTile>
                   Navigator.of(context).pop();
                   _dialogAnimationController.reset();
                 },
-                child: const Text('İptal', style: TextStyle(color: Colors.white)),
+                child: Text(
+                  AppLocalizations.of(context)!.cancel,
+                  style: TextStyle(
+                      color: _isDarkTheme ? Colors.white : Colors.black),
+                ),
               ),
               TextButton(
                 onPressed: () async {
                   String newText = controller.text.trim();
                   if (newText.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Başlık boş olamaz.'),
-                        backgroundColor: Color(0xFF2d2f2e),
-                      ),
-                    );
                     return;
                   }
 
@@ -510,7 +641,11 @@ class _ConversationTileState extends State<ConversationTile>
                   _dialogAnimationController.reset();
                   widget.onEdit(newText);
                 },
-                child: const Text('Kaydet', style: TextStyle(color: Colors.white)),
+                child: Text(
+                  AppLocalizations.of(context)!.save,
+                  style: TextStyle(
+                      color: _isDarkTheme ? Colors.white : Colors.black),
+                ),
               ),
             ],
           ),
