@@ -1,0 +1,14 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : [],
+		"nodes" : []
+	},
+	"installers" : [],
+	"paths" : 
+	{
+		"build" : "llama_build/ggml/src",
+		"source" : "C:/Users/Dell/AndroidStudioProjects/llama.cpp/ggml/src"
+	}
+}

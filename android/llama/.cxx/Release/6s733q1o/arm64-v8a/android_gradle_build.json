@@ -1,0 +1,77 @@
+{
+  "buildFiles": [
+    "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\android\\llama\\src\\main\\cpp\\CMakeLists.txt",
+    "C:\\Users\\Dell\\AndroidStudioProjects\\llama.cpp\\CMakeLists.txt",
+    "C:\\Users\\Dell\\AndroidStudioProjects\\llama.cpp\\common\\CMakeLists.txt",
+    "C:\\Users\\Dell\\AndroidStudioProjects\\llama.cpp\\ggml\\CMakeLists.txt",
+    "C:\\Users\\Dell\\AndroidStudioProjects\\llama.cpp\\ggml\\src\\CMakeLists.txt",
+    "C:\\Users\\Dell\\AndroidStudioProjects\\llama.cpp\\src\\CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "C:\\Users\\Dell\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+      "-C",
+      "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\android\\llama\\.cxx\\Release\\6s733q1o\\arm64-v8a",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "C:\\Users\\Dell\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+    "-C",
+    "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\android\\llama\\.cxx\\Release\\6s733q1o\\arm64-v8a",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "ai::@6890427a1f51a3e7e1df": {
+      "toolchain": "toolchain",
+      "abi": "arm64-v8a",
+      "artifactName": "ai",
+      "output": "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\build\\llama\\intermediates\\cxx\\Release\\6s733q1o\\obj\\arm64-v8a\\libai.so",
+      "runtimeFiles": [
+        "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\build\\llama\\intermediates\\cxx\\Release\\6s733q1o\\obj\\arm64-v8a\\libllama.so",
+        "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\build\\llama\\intermediates\\cxx\\Release\\6s733q1o\\obj\\arm64-v8a\\libggml.so"
+      ]
+    },
+    "build_info::@9f41f6696c114fc64054": {
+      "toolchain": "toolchain",
+      "abi": "arm64-v8a",
+      "artifactName": "build_info"
+    },
+    "common::@9f41f6696c114fc64054": {
+      "toolchain": "toolchain",
+      "abi": "arm64-v8a",
+      "artifactName": "common",
+      "output": "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\android\\llama\\.cxx\\Release\\6s733q1o\\arm64-v8a\\llama_build\\common\\libcommon.a"
+    },
+    "ggml::@ac82e33bde8b2dde67df": {
+      "toolchain": "toolchain",
+      "abi": "arm64-v8a",
+      "artifactName": "ggml",
+      "output": "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\build\\llama\\intermediates\\cxx\\Release\\6s733q1o\\obj\\arm64-v8a\\libggml.so",
+      "runtimeFiles": [
+        "C:\\Users\\Dell\\AppData\\Local\\Android\\Sdk\\ndk\\25.1.8937393\\toolchains\\llvm\\prebuilt\\windows-x86_64\\lib64\\clang\\14.0.6\\lib\\linux\\aarch64\\libomp.so"
+      ]
+    },
+    "llama::@a28f7d715364b5d9b6c0": {
+      "toolchain": "toolchain",
+      "abi": "arm64-v8a",
+      "artifactName": "llama",
+      "output": "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\build\\llama\\intermediates\\cxx\\Release\\6s733q1o\\obj\\arm64-v8a\\libllama.so",
+      "runtimeFiles": [
+        "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\build\\llama\\intermediates\\cxx\\Release\\6s733q1o\\obj\\arm64-v8a\\libggml.so"
+      ]
+    }
+  },
+  "toolchains": {
+    "toolchain": {
+      "cCompilerExecutable": "C:\\Users\\Dell\\AppData\\Local\\Android\\Sdk\\ndk\\25.1.8937393\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang.exe",
+      "cppCompilerExecutable": "C:\\Users\\Dell\\AppData\\Local\\Android\\Sdk\\ndk\\25.1.8937393\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang++.exe"
+    }
+  },
+  "cFileExtensions": [
+    "c"
+  ],
+  "cppFileExtensions": [
+    "cpp"
+  ]
+}

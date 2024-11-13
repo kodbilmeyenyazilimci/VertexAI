@@ -1,0 +1,62 @@
+{
+  "buildFiles": [
+    "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\android\\llama\\src\\main\\cpp\\CMakeLists.txt",
+    "C:\\Users\\Dell\\AndroidStudioProjects\\llama.cpp\\CMakeLists.txt",
+    "C:\\Users\\Dell\\AndroidStudioProjects\\llama.cpp\\common\\CMakeLists.txt",
+    "C:\\Users\\Dell\\AndroidStudioProjects\\llama.cpp\\ggml\\CMakeLists.txt",
+    "C:\\Users\\Dell\\AndroidStudioProjects\\llama.cpp\\ggml\\src\\CMakeLists.txt",
+    "C:\\Users\\Dell\\AndroidStudioProjects\\llama.cpp\\src\\CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "C:\\Users\\Dell\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+      "-C",
+      "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\android\\llama\\.cxx\\Release\\6s733q1o\\x86",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "C:\\Users\\Dell\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+    "-C",
+    "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\android\\llama\\.cxx\\Release\\6s733q1o\\x86",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "common::@9f41f6696c114fc64054": {
+      "artifactName": "common",
+      "abi": "x86",
+      "output": "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\android\\llama\\.cxx\\Release\\6s733q1o\\x86\\llama_build\\common\\libcommon.a",
+      "runtimeFiles": []
+    },
+    "build_info::@9f41f6696c114fc64054": {
+      "artifactName": "build_info",
+      "abi": "x86",
+      "runtimeFiles": []
+    },
+    "ai::@6890427a1f51a3e7e1df": {
+      "artifactName": "ai",
+      "abi": "x86",
+      "output": "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\build\\llama\\intermediates\\cxx\\Release\\6s733q1o\\obj\\x86\\libai.so",
+      "runtimeFiles": [
+        "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\build\\llama\\intermediates\\cxx\\Release\\6s733q1o\\obj\\x86\\libllama.so",
+        "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\build\\llama\\intermediates\\cxx\\Release\\6s733q1o\\obj\\x86\\libggml.so"
+      ]
+    },
+    "ggml::@ac82e33bde8b2dde67df": {
+      "artifactName": "ggml",
+      "abi": "x86",
+      "output": "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\build\\llama\\intermediates\\cxx\\Release\\6s733q1o\\obj\\x86\\libggml.so",
+      "runtimeFiles": [
+        "C:\\Users\\Dell\\AppData\\Local\\Android\\Sdk\\ndk\\25.1.8937393\\toolchains\\llvm\\prebuilt\\windows-x86_64\\lib64\\clang\\14.0.6\\lib\\linux\\i386\\libomp.so"
+      ]
+    },
+    "llama::@a28f7d715364b5d9b6c0": {
+      "artifactName": "llama",
+      "abi": "x86",
+      "output": "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\build\\llama\\intermediates\\cxx\\Release\\6s733q1o\\obj\\x86\\libllama.so",
+      "runtimeFiles": [
+        "C:\\Users\\Dell\\AndroidStudioProjects\\ai\\build\\llama\\intermediates\\cxx\\Release\\6s733q1o\\obj\\x86\\libggml.so"
+      ]
+    }
+  }
+}
