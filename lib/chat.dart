@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
+import 'package:shimmer/shimmer.dart';
 import 'package:uuid/uuid.dart';
 import 'account.dart';
 import 'data.dart';
@@ -13,18 +14,26 @@ import 'main.dart';
 import 'menu.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart'; // Localization package
 import 'api.dart'; // Import ApiService
-import 'package:flutter_markdown/flutter_markdown.dart'; // For rendering markdown
+import 'notifications.dart';
 import 'premium.dart';
 import 'theme.dart'; // Import ThemeProvider
 import 'dart:io';
 import 'package:path/path.dart' as path;
-import 'package:path_provider/path_provider.dart';
+import 'package:path_provider/path_provider.dart'; // For checking internet connection
+import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart'; // Import for internet connection checking
+import 'package:flutter_math_fork/flutter_math.dart'; // Import for LaTeX rendering
+import 'system_info.dart';
+
 
 // Represents user and model messages
 class Message {
   String text; // Mutable text
   final bool isUserMessage;
-  Message({required this.text, required this.isUserMessage});
+  bool shouldFadeOut; // New field for fade out animation
+  Message(
+      {required this.text,
+        required this.isUserMessage,
+        this.shouldFadeOut = false});
 }
 
 // Represents model information
@@ -62,7 +71,7 @@ class ChatScreen extends StatefulWidget {
   final String? modelPath;
 
   ChatScreen({
-    Key? key,
+    super.key,
     this.conversationID,
     this.conversationTitle,
     this.modelTitle,
@@ -72,7 +81,7 @@ class ChatScreen extends StatefulWidget {
     this.modelRam,
     this.modelProducer,
     this.modelPath,
-  }) : super(key: key);
+  });
 
   @override
   ChatScreenState createState() => ChatScreenState();
@@ -83,21 +92,24 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final TextEditingController _controller =
   TextEditingController(); // Manages input text
   bool isModelLoaded = false; // Tracks if the model is loaded
-  bool isWaitingForResponse =
-  false; // Tracks if waiting for model's response
+  bool isWaitingForResponse = false; // Tracks if waiting for model's response
   Timer? responseTimer; // Timer to manage delayed responses
-  final uuid = Uuid(); // Generates unique conversation IDs
+  final uuid = const Uuid(); // Generates unique conversation IDs
   String? conversationID; // Current conversation ID
   String? conversationTitle; // Current conversation title
   late AnimationController _modelAnimationController;
   final Duration _modelAnimationDuration = const Duration(milliseconds: 500);
   final int _modelAnimationDelay = 100; // milliseconds delay between each item
-  static const MethodChannel llamaChannel =
-  MethodChannel('com.vertex.ai/llama');
+  static const MethodChannel llamaChannel = MethodChannel('com.vertex.ai/llama');
+  bool _hasSavedMessage = false;
+  final FocusNode _textFieldFocusNode = FocusNode(); // Initialize FocusNode
 
   bool _isSendButtonVisible = false; // Controls send button visibility
   final ScrollController _scrollController =
   ScrollController(); // Controls message list scrolling
+  SystemInfoData? _systemInfo;
+  bool isStorageSufficient = true; // Tracks storage sufficiency
+  static const int requiredSizeMB = 1024; // 1GB in MB
 
   // Model information variables
   String? modelTitle;
@@ -110,11 +122,26 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   bool isModelSelected = false; // Tracks if a model is selected
 
-  List<ModelInfo> _allModels = []; // List of all models
+  final List<ModelInfo> _allModels = []; // List of all models
   List<ModelInfo> _filteredModels = []; // Models filtered by search
   String _searchQuery = '';
 
-  final ApiService apiService = ApiService(); // ApiService instance
+  late ApiService apiService;
+  bool _isApiServiceInitialized = false; // Tracks if ApiService is initialized
+
+  // Added variables for input field height
+  double _inputFieldHeight = 0.0;
+  final GlobalKey _inputFieldKey = GlobalKey();
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_isApiServiceInitialized) {
+      final localizations = AppLocalizations.of(context)!;
+      apiService = ApiService(localizations: localizations);
+      _isApiServiceInitialized = true;
+    }
+  }
 
   // New flag: responseStopped
   bool responseStopped = false;
@@ -127,6 +154,13 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   late Animation<Offset> _warningSlideAnimation;
   late Animation<double> _warningFadeAnimation;
 
+  // Variable to control the visibility of the scroll-down button
+  bool _showScrollDownButton = false;
+
+  // New variable to track internet connection
+  bool hasInternetConnection = true;
+  late StreamSubscription<InternetStatus> _internetSubscription;
+
   void reloadModels() {
     setState(() {
       _loadModels();
@@ -137,6 +171,7 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _fetchSystemInfo();
 
     // Retrieve model information from widget
     modelTitle = widget.modelTitle;
@@ -150,7 +185,9 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     // Initialize model animation controller
     _modelAnimationController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 500),
+      duration: Duration(
+          milliseconds: _filteredModels.length * _modelAnimationDelay +
+              _modelAnimationDuration.inMilliseconds),
     );
 
     // Initialize the AnimationController for the warning notification
@@ -161,8 +198,8 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
     // Define the slide animation
     _warningSlideAnimation = Tween<Offset>(
-      begin: const Offset(0, 1.0),  // Alt kısımdan başlayarak yukarı doğru hareket
-      end: const Offset(0, 0),
+      begin: const Offset(0, 1.0), // Starts from below
+      end: const Offset(0, 0), // Slides up to original position
     ).animate(
       CurvedAnimation(
         parent: _warningAnimationController,
@@ -181,6 +218,15 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       ),
     );
 
+    // Add listener to handle when reverse animation completes
+    _warningAnimationController.addStatusListener((status) {
+      if (status == AnimationStatus.dismissed) {
+        setState(() {
+          _showInappropriateMessageWarning = false;
+        });
+      }
+    });
+
     if (isServerSideModel(modelTitle)) {
       isModelSelected = true;
       isModelLoaded = true; // Server-side models are always loaded via API
@@ -192,8 +238,7 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       _loadModels();
     }
 
-    llamaChannel
-        .setMethodCallHandler(_methodCallHandler); // Set method channel handler
+    llamaChannel.setMethodCallHandler(_methodCallHandler); // Set method channel handler
 
     if (widget.conversationID != null) {
       _loadPreviousMessages(widget.conversationID!); // Load previous messages
@@ -206,6 +251,55 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         _modelAnimationController.forward();
       }
     });
+
+    // Add scroll listener for the scroll-down button
+    _scrollController.addListener(_scrollListener);
+
+    // Initialize internet connection listener
+    _internetSubscription =
+        InternetConnection().onStatusChange.listen((status) {
+          final hasConnection = status == InternetStatus.connected;
+          setState(() {
+            hasInternetConnection = hasConnection;
+            // Any UI updates needed
+          });
+        });
+  }
+
+  /// **New Method to Fetch System Information**
+  Future<void> _fetchSystemInfo() async {
+    try {
+      SystemInfoData info = await SystemInfoProvider.fetchSystemInfo();
+      setState(() {
+        _systemInfo = info;
+        // Assuming freeStorage is in MB
+        isStorageSufficient = _systemInfo!.freeStorage >= requiredSizeMB;
+      });
+    } catch (e) {
+      print("Error fetching system info: $e");
+      setState(() {
+        isStorageSufficient = false; // Assume insufficient if error occurs
+      });
+    }
+  }
+
+
+  // Scroll listener to control the visibility of the scroll-down button
+  void _scrollListener() {
+    if (!_scrollController.hasClients) return;
+    if (!_isUserAtBottom() && messages.length > 1) {
+      if (!_showScrollDownButton) {
+        setState(() {
+          _showScrollDownButton = true;
+        });
+      }
+    } else {
+      if (_showScrollDownButton) {
+        setState(() {
+          _showScrollDownButton = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadModels() async {
@@ -288,12 +382,18 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   // Load model configuration and invoke local method to load the model
   Future<void> loadModel() async {
     final prefs = await SharedPreferences.getInstance();
-    final selectedModelPath = modelPath ?? prefs.getString('selected_model_path');
+    final selectedModelPath =
+        modelPath ?? prefs.getString('selected_model_path');
     if (selectedModelPath != null && selectedModelPath.isNotEmpty) {
       try {
-        llamaChannel.invokeMethod('loadModel', {'path': selectedModelPath});
+        await llamaChannel
+            .invokeMethod('loadModel', {'path': selectedModelPath});
         setState(() {
           isModelLoaded = true; // Indicate that the model is loaded
+        });
+        // Model yüklendikten sonra klavyeyi açmak için odaklan
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          FocusScope.of(context).requestFocus(_textFieldFocusNode);
         });
       } catch (e) {
         print('Error loading model: $e');
@@ -313,10 +413,8 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Future<void> _methodCallHandler(MethodCall call) async {
     if (call.method == 'onMessageResponse') {
       if (isLocalModel(modelTitle)) {
-        // Yerel model, veriyi String olarak işleyelim
         _onMessageResponse(call.arguments as String);
       } else if (isServerSideModel(modelTitle)) {
-        // Sunucu taraflı model, veriyi UTF8 olarak işleyelim
         final data = call.arguments;
         String decodedMessage;
         if (data is Uint8List) {
@@ -329,21 +427,23 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         _onMessageResponse(decodedMessage);
       }
     } else if (call.method == 'onMessageComplete') {
-      _finalizeResponse(); // Yanıt tamamlandığında işlem sonlandır
+      _stopResponse(); // Finalize when response is complete
     } else if (call.method == 'onModelLoaded') {
-      setState(() => isModelLoaded = true); // Modelin yüklendiğini belirt
+      setState(() => isModelLoaded = true); // Indicate model is loaded
     }
   }
 
-  // Yerel model olup olmadığını kontrol eden fonksiyon
+  // Check if it's a local model
   bool isLocalModel(String? modelTitle) {
-    // Model server-side modellerden biri değilse yerel model kabul edilir
+    // Assume non-server-side models are local
     return !isServerSideModel(modelTitle);
   }
 
-  // Sunucu taraflı model olup olmadığını kontrol eden fonksiyon
+  // Check if it's a server-side model
   bool isServerSideModel(String? modelTitle) {
-    return modelTitle == 'Gemini' || modelTitle == 'Llama3.2' || modelTitle == 'Hermes';
+    return modelTitle == 'Gemini' ||
+        modelTitle == 'Llama3.2' ||
+        modelTitle == 'Hermes';
   }
 
   Future<String> _getModelFilePath(String title) async {
@@ -355,6 +455,7 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   // Process tokens from the model by updating the last message
   void _onMessageResponse(String token) {
+    // If canceled, ignore the response
     if (isWaitingForResponse &&
         messages.isNotEmpty &&
         !messages.last.isUserMessage) {
@@ -373,29 +474,7 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   void _startResponseTimeout() {
     responseTimer?.cancel(); // Cancel existing timer
     responseTimer =
-        Timer(const Duration(seconds: 5), _finalizeResponse); // 5 sec delay
-  }
-
-  // Finalize and display the model's response
-  void _finalizeResponse() {
-    if (isWaitingForResponse &&
-        messages.isNotEmpty &&
-        !messages.last.isUserMessage) {
-      setState(() {
-        // Trim trailing spaces
-        messages.last.text = messages.last.text.trimRight();
-        isWaitingForResponse = false;
-      });
-
-      String fullResponse = messages.last.text;
-
-      // Save the response to conversation
-      _saveMessageToConversation(fullResponse, false);
-
-      _scrollToBottom(forceScroll: true);
-    }
-
-    responseTimer?.cancel();
+        Timer(const Duration(seconds: 5), _stopResponse); // 5 sec delay
   }
 
   // Load previous messages using conversation ID
@@ -413,7 +492,13 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       }
     }
     setState(() {}); // Refresh UI
-    _scrollToBottom(forceScroll: true); // Scroll to show loaded messages
+
+    // Schedule scrolling to bottom after a short delay to ensure UI is built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 100), () {
+        _scrollToBottom(forceScroll: true);
+      });
+    });
   }
 
   // Save conversation title
@@ -453,7 +538,11 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       modelTitle = conversationData.modelTitle;
       modelImagePath = conversationData.modelImagePath;
       isModelSelected = true;
-      isModelLoaded = isServerSideModel(modelTitle) ? true : false;
+      isModelLoaded = conversationData.isModelAvailable
+          ? isServerSideModel(modelTitle)
+          ? true
+          : false
+          : false;
       messages.clear();
       responseStopped = false; // Reset the flag
     });
@@ -526,6 +615,10 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       setState(() {
         isModelLoaded = true; // Server-side models are loaded via API
       });
+      // Model yüklendikten sonra klavyeyi açmak için odaklan
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        FocusScope.of(context).requestFocus(_textFieldFocusNode);
+      });
     } else {
       // Load the selected model
       loadModel();
@@ -567,28 +660,31 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final maxScroll = _scrollController.position.maxScrollExtent;
     final currentScroll = _scrollController.offset;
     return (maxScroll - currentScroll) <=
-        50; // Consider within 50 pixels from the bottom
+        20; // Reduced threshold to 20 pixels
   }
 
   // Scroll function
-  void _scrollToBottom({bool forceScroll = false}) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        if (forceScroll || _isUserAtBottom()) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-          );
-        }
+  Future<void> _scrollToBottom({bool forceScroll = false}) async {
+    if (!_scrollController.hasClients) return;
+    if (forceScroll || !_isUserAtBottom()) {
+      await _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(
+            milliseconds: 300), // Increased duration for smoother scroll
+        curve: Curves.easeOut,
+      );
+      // After scrolling, ensure the button is hidden
+      if (forceScroll) {
+        setState(() {
+          _showScrollDownButton = false;
+        });
       }
-    });
+    }
   }
 
   // Manage input text changes to show/hide send button
   void _onTextChanged(String text) {
-    setState(() =>
-    _isSendButtonVisible = text.isNotEmpty && !isWaitingForResponse);
+    setState(() => _isSendButtonVisible = text.isNotEmpty && !isWaitingForResponse);
   }
 
   // Manage message sending
@@ -598,25 +694,33 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     if (text.isNotEmpty) {
       // Check if the message is appropriate
       if (!_isMessageAppropriate(text)) {
-        // Show the inappropriate message warning
-        _showInappropriateMessageWarning;
-        return; // Do not proceed with sending the message
+        // Do not proceed with sending the message
+        return;
       }
 
       setState(() {
-        messages.add(
-            Message(text: text, isUserMessage: true)); // Add user message
+        messages.add(Message(text: text, isUserMessage: true)); // Add user message
         _controller.clear(); // Clear input field
         isWaitingForResponse = true; // Set waiting status
         _isSendButtonVisible = false; // Hide send button
-
-        // Add empty model message to receive tokens
-        messages.add(Message(text: "", isUserMessage: false)); // Placeholder
+        responseStopped = false; // <-- Reset the flag here
+        _hasSavedMessage = false;
+        if (isServerSideModel(modelTitle)) {
+          final localizations =
+          AppLocalizations.of(context)!; // Localization access
+          messages.add(Message(
+              text: localizations.thinking,
+              isUserMessage: false)); // Localized text
+        } else {
+          messages.add(Message(
+              text: "", isUserMessage: false)); // Placeholder for AI response
+        }
       });
 
       if (conversationID == null) {
         conversationID = uuid.v4(); // Generate conversation ID
-        conversationTitle = text; // Use first message as title
+        // Truncate the conversation title to 40 characters if necessary
+        conversationTitle = text.length > 40 ? text.substring(0, 40) : text;
         _saveConversationTitle(conversationTitle!); // Save title
         _saveConversation(conversationTitle!); // Save conversation immediately
 
@@ -627,29 +731,25 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
       // Save user's message
       _saveMessageToConversation(text, true);
-
-      if (modelTitle == 'Gemini') {
-        // Use ApiService to get response from Gemini API
+      _scrollToBottom();
+      if (isServerSideModel(modelTitle)) {
+        // Use ApiService to get response from server-side models
         try {
-          String response = await apiService.getGeminiResponse(text);
+          String response;
+          if (modelTitle == 'Gemini') {
+            response = await apiService.getGeminiResponse(text);
+          } else if (modelTitle == 'Llama3.2') {
+            response = await apiService.getLlamaResponse(text);
+          } else if (modelTitle == 'Hermes') {
+            response = await apiService.getHermesResponse(text);
+          } else {
+            response = '';
+          }
 
-          // Display response with typewriter effect
-          _typeWriterEffect(response);
-        } catch (e) {
-          // Handle errors
+          // Clear "Thinking..." message
           setState(() {
-            isWaitingForResponse = false;
-            if (messages.isNotEmpty && !messages.last.isUserMessage) {
-              messages.last.text = 'Error: $e';
-            } else {
-              messages.add(Message(text: 'Error: $e', isUserMessage: false));
-            }
+            messages.last.text = '';
           });
-        }
-      } else if (modelTitle == 'Llama3.2') {
-        // Use ApiService to get response from Llama3.2 API
-        try {
-          String response = await apiService.getLlamaResponse(text);
 
           // Display response with typewriter effect
           _typeWriterEffect(response);
@@ -664,22 +764,9 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             }
           });
         }
-      } else if (modelTitle == 'Hermes') {
-        // Get response from Hermes API
-        try {
-          String response = await apiService.getHermesResponse(text);
-          _typeWriterEffect(response);
-        } catch (e) {
-          // Handle errors
-          setState(() {
-            isWaitingForResponse = false;
-            if (messages.isNotEmpty && !messages.last.isUserMessage) {
-              messages.last.text = 'Error: $e';
-            } else {
-              messages.add(Message(text: 'Error: $e', isUserMessage: false));
-            }
-          });
-        }
+      } else if (modelTitle == 'Gemini') {
+        // Existing code for other server-side models (if any)
+        // This block might be redundant now, since server-side models are handled above
       } else {
         // Existing code for other models (if any)
         llamaChannel.invokeMethod(
@@ -691,37 +778,52 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   // Function to stop the ongoing response
-  void _stopResponse() {
+  Future<void> _stopResponse() async {
     if (isWaitingForResponse) {
       setState(() {
-        responseStopped = true; // Set the flag to indicate stopping
+        responseStopped = true; // Set the flag to stop the response
         isWaitingForResponse = false; // Update the waiting status
         _isSendButtonVisible =
             _controller.text.isNotEmpty; // Update send button visibility
       });
       responseTimer?.cancel();
-      _finalizeResponse();
+
+      // Save the incomplete response
+      if (messages.isNotEmpty &&
+          !messages.last.isUserMessage &&
+          !_hasSavedMessage) {
+        // Check if the last message is not just the "Thinking" placeholder
+        final lastMessageText = messages.last.text.trim();
+        if (lastMessageText.isNotEmpty &&
+            lastMessageText != AppLocalizations.of(context)!.thinking) {
+          await _saveMessageToConversation(messages.last.text, false);
+          setState(() {
+            _hasSavedMessage = true; // Message saved
+          });
+        } else {
+          // Instead of removing the incomplete "Thinking" message,
+          // set shouldFadeOut to true
+          setState(() {
+            messages.last.shouldFadeOut = true;
+          });
+        }
+      }
     }
   }
 
   // Typewriter effect for API responses
   Future<void> _typeWriterEffect(String fullText) async {
+    List<String> words = fullText.split(' ');
     int index = 0;
-    String buffer = '';
-    const int batchSize = 5; // Number of characters to add each time
-    const int delayDuration = 50; // Delay duration in milliseconds
 
-    while (index < fullText.length &&
+    while (index < words.length &&
         isWaitingForResponse &&
         !responseStopped) {
-      int endIndex = index + batchSize;
-      if (endIndex > fullText.length) endIndex = fullText.length;
-      buffer = fullText.substring(index, endIndex);
-      index = endIndex;
+      if (!mounted) return;
 
       setState(() {
         if (messages.isNotEmpty && !messages.last.isUserMessage) {
-          messages.last.text += buffer;
+          messages.last.text += (index > 0 ? ' ' : '') + words[index];
         }
       });
 
@@ -729,52 +831,27 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         _scrollToBottom();
       }
 
-      await Future.delayed(Duration(milliseconds: delayDuration));
+      // *** Changed delay from 500ms to 42ms for overlapping animations ***
+      await Future.delayed(const Duration(milliseconds: 42));
+      index++;
     }
 
-    setState(() {
-      isWaitingForResponse = false;
-    });
-
-    // Save the response
-    _saveMessageToConversation(messages.last.text, false);
-
-    responseStopped = false; // Reset the flag
-    _scrollToBottom(forceScroll: true); // Scroll to bottom after completion
+    if (!_hasSavedMessage) {
+      if (!mounted) return;
+      setState(() {
+        isWaitingForResponse = false;
+      });
+      await _saveMessageToConversation(messages.last.text, false);
+      setState(() {
+        _hasSavedMessage = true;
+      });
+      _scrollToBottom(forceScroll: true);
+    }
   }
 
   // Check if the message is appropriate
-// Check if the message is appropriate
   bool _isMessageAppropriate(String text) {
-    List<String> inappropriateWords = [
-      'seks',
-      'sikiş',
-      'porno',
-      'yarak',
-      'pussy',
-      'yarrak',
-      'salak',
-      'aptal',
-      'orospu',
-      'göt',
-      'intihar',
-      'ölmek',
-      'çocuk pornosu',
-      'sex',
-      'amk',
-      'motherfucker',
-      'fuck',
-      'porn',
-      'child porn',
-      'suicide',
-      'sik',
-      'siksem',
-      'sikmek',
-      'sakso',
-      'blowjob',
-      'handjob',
-      'asshole'
-    ];
+    List<String> inappropriateWords = [      'seks',      'sikiş',      'porno',      'yarak',      'pussy',      'yarrak',      'salak',      'aptal',      'orospu',      'göt',      'intihar',      'ölmek',      'çocuk pornosu',      'sex',      'amk',      'motherfucker',      'fuck',      'porn',      'child porn',      'suicide',      'sik',      'siksem',      'sikmek',      'sakso',      'blowjob',      'handjob',      'asshole'    ];
 
     // Normalize the input text
     final lowerText = text.toLowerCase();
@@ -789,11 +866,10 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         _warningAnimationController.forward(); // Start the animation
 
         // Hide the warning after 3 seconds
-        Future.delayed(Duration(seconds: 3), () {
-          setState(() {
-            _showInappropriateMessageWarning = false;
-          });
-          _warningAnimationController.reverse(); // Reverse the animation
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) {
+            _warningAnimationController.reverse(); // Reverse the animation
+          }
         });
 
         return false; // Message is inappropriate
@@ -805,81 +881,150 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   // Build method: Creates chat or model selection screen
   @override
   Widget build(BuildContext context) {
-    final localizations = AppLocalizations.of(context)!; // Access localization
-    final _isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
+    final localizations = AppLocalizations.of(context)!; // Localization access
+    final isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
+
+    // Measure the input field height
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final RenderBox? renderBox = _inputFieldKey.currentContext?.findRenderObject() as RenderBox?;
+      if (renderBox != null) {
+        final height = renderBox.size.height;
+        if (_inputFieldHeight != height) {
+          setState(() {
+            _inputFieldHeight = height;
+          });
+        }
+      }
+    });
+
     return Scaffold(
-      appBar:
-      _buildAppBar(context, localizations, _isDarkTheme), // Custom app bar
+      appBar: _buildAppBar(context, localizations, isDarkTheme),
       body: Stack(
         children: [
+          // Main content: Keeps the existing background color
           Container(
-            color: _isDarkTheme
-                ? const Color(0xFF090909)
-                : Colors.white, // Background color adjusted
+            color: isDarkTheme ? const Color(0xFF090909) : Colors.white,
             child: Column(
               children: [
-                // AnimatedSwitcher applies only to the changing content
+                // Message list or model selection
                 Expanded(
                   child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 100),
+                    duration:
+                    const Duration(milliseconds: 150), // Shortened duration
                     transitionBuilder:
                         (Widget child, Animation<double> animation) {
                       return FadeTransition(opacity: animation, child: child);
                     },
-                    // Ensure same size by using Expanded
                     child: isModelSelected
                         ? Container(
                       key: const ValueKey('chat'),
-                      child: _buildChatScreen(
-                          localizations, _isDarkTheme),
+                      child: _buildChatScreen(localizations, isDarkTheme),
                     )
                         : Container(
                       key: const ValueKey('selection'),
                       child: _buildModelSelectionScreen(
-                          localizations, _isDarkTheme),
+                          localizations, isDarkTheme),
                     ),
                   ),
                 ),
+                // Input field
+                _buildInputField(localizations, isDarkTheme),
               ],
             ),
           ),
-          // Warning notification for inappropriate messages
-          // Warning notification for inappropriate messages
+          // Scroll Down Button (Only visible in Chat Screen and when conditions met)
+          if (isModelSelected && messages.length > 1)
+            Positioned(
+              bottom: _inputFieldHeight + 16.0, // Adjust position based on input field height
+              left: 0, // Aligns button horizontally to center
+              right: 0,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  AnimatedOpacity(
+                    opacity: _showScrollDownButton ? 1.0 : 0.0,
+                    duration:
+                    const Duration(milliseconds: 200), // Shortened duration
+                    child: GestureDetector(
+                      onTap: () async {
+                        // Start fading out
+                        setState(() {
+                          _showScrollDownButton = false;
+                        });
+                        // Start scrolling
+                        await _scrollToBottom(forceScroll: true);
+                      },
+                      child: Container(
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                          color:
+                          isDarkTheme ? Color(0xFF161616) : Color(0xFFE9E9E9),
+                          borderRadius:
+                          BorderRadius.circular(12), // Rounded edges
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Colors.black26,
+                              blurRadius: 4,
+                              offset: Offset(2, 2),
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          Icons.arrow_downward,
+                          color: isDarkTheme ? Colors.white : Colors.black,
+                          size: 24,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          // Inappropriate message warning (Overlay)
           if (_showInappropriateMessageWarning)
             Positioned(
-              bottom: MediaQuery.of(context).size.height * 0.09, // Alt kısımdan biraz yukarıda
-              left: MediaQuery.of(context).size.width * 0.1,
-              right: MediaQuery.of(context).size.width * 0.1,
+              bottom: _inputFieldHeight + 80, // Adjusted position
+              left: 16,
+              right: 16,
               child: SlideTransition(
                 position: _warningSlideAnimation,
                 child: FadeTransition(
                   opacity: _warningFadeAnimation,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          vertical: 12.0, horizontal: 20.0),
-                      decoration: BoxDecoration(
-                        color: Colors.red, // Red background
-                        borderRadius: BorderRadius.circular(8.0),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black26,
-                            blurRadius: 8,
-                            offset: Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Text(
-                          localizations.inappropriateMessageWarning,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white, // White text
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 12.0, horizontal: 20.0),
+                    decoration: BoxDecoration(
+                      color: isDarkTheme
+                          ? Colors.red[700] // Dark theme red
+                          : Colors.red, // Light theme red
+                      borderRadius: BorderRadius.circular(8.0),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Colors.black26,
+                          blurRadius: 8,
+                          offset: Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.warning,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 12.0),
+                        Expanded(
+                          child: Text(
+                            localizations.inappropriateMessageWarning,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white, // White text
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                     ),
                   ),
                 ),
@@ -890,23 +1035,48 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
+  // New method to show internet required notification using NotificationService
+  void _showInternetRequiredNotification() {
+    final localizations = AppLocalizations.of(context)!;
+    final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
+    final isDarkTheme = themeProvider.isDarkTheme;
+
+    final notificationService =
+    Provider.of<NotificationService>(context, listen: false);
+
+    notificationService.showCustomNotification(
+      message: localizations.internetRequired,
+      backgroundColor: isDarkTheme ? Colors.red[700]! : Colors.red,
+      textColor: Colors.white,
+      icon: Icons.wifi_off, // Icon indicating no internet
+      beginOffset: const Offset(0, 1.0),
+      endOffset: const Offset(0, 0),
+      bottomOffset: 80.0, // Adjust based on your UI
+      fontSize: 12.0,
+      maxWidth: 380.0, // Adjust as needed
+      width: 360.0, // Optional: set a fixed width
+      duration: const Duration(seconds: 2),
+    );
+  }
+
   // Build the model selection screen
   Widget _buildModelSelectionScreen(
-      AppLocalizations localizations, bool _isDarkTheme) {
+      AppLocalizations localizations, bool isDarkTheme) {
     return _allModels.isNotEmpty
         ? Column(
       children: [
         // Search bar
         Padding(
           padding: const EdgeInsets.all(8.0),
-          child: _buildSearchBar(localizations, _isDarkTheme),
+          child: _buildSearchBar(localizations, isDarkTheme),
         ),
         // Models grid or "No results found" message
         Expanded(
           child: _filteredModels.isNotEmpty
               ? GridView.builder(
             padding: const EdgeInsets.all(8.0),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            gridDelegate:
+            const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 3, // 3 models per row
               crossAxisSpacing: 8.0,
               mainAxisSpacing: 8.0,
@@ -925,8 +1095,8 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   _modelAnimationDuration.inMilliseconds /
                       _modelAnimationController
                           .duration!.inMilliseconds;
-              final animation = Tween<double>(begin: 0, end: 1)
-                  .animate(
+              final animation =
+              Tween<double>(begin: 0, end: 1).animate(
                 CurvedAnimation(
                   parent: _modelAnimationController,
                   curve:
@@ -936,69 +1106,85 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
               String imagePath = model.imagePath;
 
+              // Determine if the model is a server-side model
+              bool isServerSide = isServerSideModel(model.title);
+
+              // Determine if the button should be disabled
+              bool isDisabled =
+                  !hasInternetConnection && isServerSide;
+
               return FadeTransition(
                 opacity: animation,
                 child: GestureDetector(
                   onTap: () {
-                    _selectModel(model);
+                    if (isDisabled) {
+                      _showInternetRequiredNotification(); // Show custom notification
+                    } else {
+                      _selectModel(model);
+                      // Scroll to bottom when a model is selected
+                      _scrollToBottom(forceScroll: true);
+                    }
                   },
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: _isDarkTheme
-                          ? const Color(0xFF1B1B1B)
-                          : Colors.grey[200],
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black26,
-                          blurRadius: 4,
-                          offset: const Offset(2, 2),
-                        ),
-                      ],
-                      border: Border.all(
-                          color: _isDarkTheme
-                              ? Colors.grey[700]!
-                              : Colors.grey[300]!),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: ClipRRect(
-                            borderRadius:
-                            BorderRadius.circular(8.0),
-                            child: Image.asset(
-                              imagePath,
-                              height: 80,
-                              fit: BoxFit.contain,
+                  child: Opacity(
+                    opacity: isDisabled ? 0.5 : 1.0,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: isDarkTheme
+                            ? const Color(0xFF1B1B1B)
+                            : Colors.grey[200],
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black26,
+                            blurRadius: 4,
+                            offset: Offset(2, 2),
+                          ),
+                        ],
+                        border: Border.all(
+                            color: isDarkTheme
+                                ? Colors.grey[700]!
+                                : Colors.grey[300]!),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: ClipRRect(
+                              borderRadius:
+                              BorderRadius.circular(8.0),
+                              child: Image.asset(
+                                imagePath,
+                                height: 80,
+                                fit: BoxFit.contain,
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(height: 8.0),
-                        Text(
-                          model.title,
-                          style: TextStyle(
-                            color: _isDarkTheme
-                                ? Colors.white
-                                : Colors.black,
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
+                          const SizedBox(height: 8.0),
+                          Text(
+                            model.title,
+                            style: TextStyle(
+                              color: isDarkTheme
+                                  ? Colors.white
+                                  : Colors.black,
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.center,
                           ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 4.0),
-                        Text(
-                          model.producer,
-                          style: TextStyle(
-                            color: _isDarkTheme
-                                ? Colors.grey[400]
-                                : Colors.grey[600],
-                            fontSize: 12,
+                          const SizedBox(height: 4.0),
+                          Text(
+                            model.producer,
+                            style: TextStyle(
+                              color: isDarkTheme
+                                  ? Colors.grey[400]
+                                  : Colors.grey[600],
+                              fontSize: 12,
+                            ),
+                            textAlign: TextAlign.center,
                           ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1009,7 +1195,7 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             child: Text(
               localizations.noMatchingModels,
               style: TextStyle(
-                  color: _isDarkTheme
+                  color: isDarkTheme
                       ? Colors.white70
                       : Colors.black54),
             ),
@@ -1021,23 +1207,24 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       child: Text(
         localizations.noModelsDownloaded,
         style: TextStyle(
-            color: _isDarkTheme ? Colors.white70 : Colors.black54),
+            color: isDarkTheme ? Colors.white70 : Colors.black54),
       ),
     );
   }
 
   // Build the search bar
   Widget _buildSearchBar(
-      AppLocalizations localizations, bool _isDarkTheme) {
+      AppLocalizations localizations, bool isDarkTheme) {
     return TextField(
+      cursorColor: isDarkTheme ? Colors.white : Colors.black,
       decoration: InputDecoration(
         hintText: localizations.searchHint,
         hintStyle:
-        TextStyle(color: _isDarkTheme ? Colors.grey[400] : Colors.grey[600]),
-        prefixIcon: Icon(Icons.search,
-            color: _isDarkTheme ? Colors.white : Colors.black),
+        TextStyle(color: isDarkTheme ? Colors.grey[400] : Colors.grey[600]),
+        prefixIcon:
+        Icon(Icons.search, color: isDarkTheme ? Colors.white : Colors.black),
         filled: true,
-        fillColor: _isDarkTheme ? Colors.grey[900] : Colors.grey[200],
+        fillColor: isDarkTheme ? Colors.grey[900] : Colors.grey[200],
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
@@ -1049,11 +1236,11 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide:
-          BorderSide(color: _isDarkTheme ? Colors.white : Colors.black),
+          BorderSide(color: isDarkTheme ? Colors.white : Colors.black),
         ),
         contentPadding: EdgeInsets.zero,
       ),
-      style: TextStyle(color: _isDarkTheme ? Colors.white : Colors.black),
+      style: TextStyle(color: isDarkTheme ? Colors.white : Colors.black),
       onChanged: (value) {
         setState(() {
           _searchQuery = value.toLowerCase();
@@ -1070,7 +1257,7 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   // Build the chat screen
   Widget _buildChatScreen(
-      AppLocalizations localizations, bool _isDarkTheme) {
+      AppLocalizations localizations, bool isDarkTheme) {
     return Column(
       children: [
         Expanded(
@@ -1087,6 +1274,7 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       child: Image.asset(
                         modelImagePath!,
                         height: 100,
+                        width: 100,
                         fit: BoxFit.contain,
                       ),
                     ),
@@ -1096,8 +1284,7 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       modelTitle!,
                       style: GoogleFonts.poppins(
                         fontSize: 20,
-                        color:
-                        _isDarkTheme ? Colors.white : Colors.black,
+                        color: isDarkTheme ? Colors.white : Colors.black,
                         fontWeight: FontWeight.w600,
                       ),
                       textAlign: TextAlign.center,
@@ -1107,26 +1294,31 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               ),
             ),
           )
-              : _buildMessagesList(_isDarkTheme),
+              : _buildMessagesList(isDarkTheme),
         ),
-        _buildInputField(localizations, _isDarkTheme),
       ],
     );
   }
 
   // Build the AppBar
   AppBar _buildAppBar(BuildContext context,
-      AppLocalizations localizations, bool _isDarkTheme) {
+      AppLocalizations localizations, bool isDarkTheme) {
     return AppBar(
       toolbarHeight: 60,
-      backgroundColor:
-      _isDarkTheme ? const Color(0xFF090909) : Colors.white,
+      backgroundColor: isDarkTheme ? const Color(0xFF090909) : Colors.white,
       centerTitle: true,
+      scrolledUnderElevation: 0,
       leading: isModelSelected
           ? IconButton(
-        icon: Icon(Icons.arrow_back,
-            color: _isDarkTheme ? Colors.white : Colors.black),
-        onPressed: () {
+        icon: Icon(
+          Icons.arrow_back,
+          color: isDarkTheme ? Colors.white : Colors.black,
+        ),
+        onPressed: () async {
+          if (isWaitingForResponse) {
+            await _stopResponse(); // Stop and save the response
+          }
+          // Reset model selection
           setState(() {
             isModelSelected = false;
             modelTitle = null;
@@ -1137,37 +1329,39 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             modelProducer = null;
             modelPath = null;
             isModelLoaded = false;
-            resetConversation();
           });
+          resetConversation(); // Clear messages and reset state
         },
       )
           : IconButton(
         icon: Container(
           decoration: BoxDecoration(
-            color:
-            _isDarkTheme ? Colors.grey[900] : Colors.grey[300],
+            color: isDarkTheme ? Colors.grey[900] : Colors.grey[300],
             borderRadius: BorderRadius.circular(8.0),
           ),
           child: Padding(
             padding: const EdgeInsets.all(8.0),
             child: Icon(Icons.auto_awesome,
-                color:
-                _isDarkTheme ? Colors.white : Colors.black,
+                color: isDarkTheme ? Colors.white : Colors.black,
                 size: 24),
           ),
         ),
-        onPressed: () => _navigateToPremiumScreen(context),
+        onPressed: () => _navigateToScreen(context, const PremiumScreen(),
+            direction: const Offset(0.0, 1.0)),
       ),
       title: isModelSelected
-          ? Text(
-        conversationTitle ?? modelTitle ?? '',
-        style: TextStyle(
-            color: _isDarkTheme ? Colors.white : Colors.black),
+          ? FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          modelTitle ?? '',
+          style:
+          TextStyle(color: isDarkTheme ? Colors.white : Colors.black),
+        ),
       )
           : Text(
         localizations.appTitle,
         style: GoogleFonts.afacad(
-          color: _isDarkTheme ? Colors.white : Colors.black,
+          color: isDarkTheme ? Colors.white : Colors.black,
           fontSize: 32,
         ),
       ), // Centered Vertex AI title with stylish font
@@ -1175,65 +1369,34 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         IconButton(
           icon: Container(
             decoration: BoxDecoration(
-              color: _isDarkTheme ? Colors.grey[900] : Colors.grey[300],
+              color: isDarkTheme ? Colors.grey[900] : Colors.grey[300],
               borderRadius: BorderRadius.circular(8.0),
             ),
             child: Padding(
               padding: const EdgeInsets.all(8.0),
               child: Icon(Icons.person,
-                  color: _isDarkTheme ? Colors.white : Colors.black,
-                  size: 24),
+                  color: isDarkTheme ? Colors.white : Colors.black, size: 24),
             ),
           ),
-          onPressed: () => _navigateToScreen(
-            context,
-            AccountScreen(),
-            isLeftToRight: false, // From right to left
-          ),
+          onPressed: () => _navigateToScreen(context, const AccountScreen(),
+              direction: const Offset(1.0, 0.0)),
         ),
       ],
     );
   }
 
-  // Navigate to a specified screen with transition
   void _navigateToScreen(BuildContext context, Widget screen,
-      {required bool isLeftToRight}) {
+      {required Offset direction}) {
     Navigator.push(
       context,
       PageRouteBuilder(
         pageBuilder: (_, animation, __) => screen,
         transitionsBuilder: (_, animation, secondaryAnimation, child) {
-          Offset begin =
-          isLeftToRight ? const Offset(-1.0, 0.0) : const Offset(1.0, 0.0);
           const end = Offset.zero;
           const curve = Curves.ease;
 
-          var tween =
-          Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
-
-          return SlideTransition(
-            position: animation.drive(tween),
-            child: child,
-          );
-        },
-        transitionDuration: const Duration(milliseconds: 300),
-      ),
-    );
-  }
-
-  // Navigate to the Premium screen
-  void _navigateToPremiumScreen(BuildContext context) {
-    Navigator.push(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (_, animation, __) => PremiumScreen(),
-        transitionsBuilder: (_, animation, secondaryAnimation, child) {
-          const begin = Offset(-1.0, 0.0); // Starts from left
-          const end = Offset.zero; // Original position
-          const curve = Curves.ease;
-
-          var tween =
-          Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+          var tween = Tween(begin: direction, end: end)
+              .chain(CurveTween(curve: curve));
 
           return SlideTransition(
             position: animation.drive(tween),
@@ -1246,60 +1409,76 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   // Build the messages list
-  Widget _buildMessagesList(bool _isDarkTheme) {
+  Widget _buildMessagesList(bool isDarkTheme) {
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       itemCount: messages.length,
       itemBuilder: (context, index) {
-        return _buildMessageTile(messages[index], _isDarkTheme); // Display message
+        return _buildMessageTile(
+            messages[index], isDarkTheme); // Display message
       },
     );
   }
 
   // Build a single message tile with copy functionality and model image
-  Widget _buildMessageTile(Message message, bool _isDarkTheme) {
+  Widget _buildMessageTile(Message message, bool isDarkTheme) {
     if (message.isUserMessage) {
       // User messages
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 5.0),
-        child: GestureDetector(
-          onLongPressStart: (details) {
-            _showMessageOptions(context, details.globalPosition, message.text);
-          },
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: Transform.translate(
-              offset: const Offset(-5, 0),
-              child: Container(
-                constraints: BoxConstraints(
-                    maxWidth: MediaQuery.of(context).size.width * 0.7),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: _isDarkTheme
-                      ? const Color(0xFF292a2c)
-                      : Colors.grey[200], // Adjusted
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  message.text,
-                  style: TextStyle(
-                    color:
-                    _isDarkTheme ? Colors.white : Colors.black, // Adjusted
-                    fontSize: 16,
+      return Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 5.0),
+            child: GestureDetector(
+              onLongPressStart: (details) {
+                _showMessageOptions(
+                    context, details.globalPosition, message.text);
+              },
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Transform.translate(
+                  offset: const Offset(-5, 0),
+                  child: Container(
+                    constraints: BoxConstraints(
+                        maxWidth: MediaQuery.of(context).size.width * 0.7),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: isDarkTheme
+                          ? const Color(0xFF141414)
+                          : Colors.grey[200], // Adjusted
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      message.text,
+                      style: TextStyle(
+                        color: isDarkTheme
+                            ? Colors.white
+                            : Colors.black, // Adjusted
+                        fontSize: 16,
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
+          // Add a 10-pixel space between consecutive user messages
+          const SizedBox(height: 10),
+        ],
       );
     } else {
-      // AI messages
+      // Regular AI message tile
       return AIMessageTile(
         text: message.text,
         imagePath: modelImagePath ?? '',
-        isDarkTheme: _isDarkTheme, // Pass the theme
+        isDarkTheme: isDarkTheme, // Pass the theme
+        shouldFadeOut: message.shouldFadeOut, // Pass the fade out flag
+        onFadeOutComplete: () {
+          // Remove the message from the messages list
+          setState(() {
+            messages.remove(message);
+          });
+        },
       );
     }
   }
@@ -1308,7 +1487,7 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   void _showMessageOptions(
       BuildContext context, Offset tapPosition, String messageText) async {
     final localizations = AppLocalizations.of(context)!;
-    final _isDarkTheme =
+    final isDarkTheme =
         Provider.of<ThemeProvider>(context, listen: false).isDarkTheme;
     final screenWidth = MediaQuery.of(context).size.width;
     const menuWidth = 150.0; // Menu width
@@ -1316,7 +1495,8 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     // Adjust the position if there's not enough space on the right
     Offset adjustedPosition = tapPosition;
     if (tapPosition.dx + menuWidth > screenWidth) {
-      adjustedPosition = Offset(screenWidth - menuWidth - 16.0, tapPosition.dy);
+      adjustedPosition =
+          Offset(screenWidth - menuWidth - 16.0, tapPosition.dy);
     }
 
     await showMenu(
@@ -1333,270 +1513,432 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           child: Row(
             children: [
               Icon(Icons.copy,
-                  color: _isDarkTheme ? Colors.white : Colors.black),
+                  color: isDarkTheme ? Colors.white : Colors.black),
               const SizedBox(width: 10),
               Text(
                 localizations.copy,
-                style: TextStyle(
-                    color: _isDarkTheme ? Colors.white : Colors.black),
+                style:
+                TextStyle(color: isDarkTheme ? Colors.white : Colors.black),
               ),
             ],
           ),
         ),
       ],
       elevation: 8.0,
-      color: _isDarkTheme ? const Color(0xFF202020) : Colors.grey[200],
+      color: isDarkTheme ? const Color(0xFF202020) : Colors.grey[200],
     ).then((value) {
       if (value == 'copy') {
         Clipboard.setData(ClipboardData(text: messageText));
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(localizations.messageCopied)),
-        );
       }
     });
   }
 
   // Build the input field for user messages
-  Widget _buildInputField(
-      AppLocalizations localizations, bool _isDarkTheme) {
+  Widget _buildInputField(AppLocalizations localizations, bool isDarkTheme) {
     return Padding(
       padding: const EdgeInsets.all(8.0),
-      child: isModelLoaded
-          ? TextField(
-        controller: _controller,
-        maxLength: 1000,
-        decoration: InputDecoration(
-          filled: true,
-          fillColor: _isDarkTheme
-              ? const Color(0xFF1B1B1B)
-              : Colors.grey[200], // Adjusted
-          counterText: '',
-          hintText: localizations.messageHint,
-          hintStyle: TextStyle(
-              color: _isDarkTheme ? Colors.grey[500] : Colors.grey[600]),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide.none,
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderSide: BorderSide(
-                color: _isDarkTheme ? Colors.white : Colors.black),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          suffixIcon: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 300),
-            transitionBuilder:
-                (Widget child, Animation<double> animation) {
-              return ScaleTransition(scale: animation, child: child);
-            },
-            child: isWaitingForResponse
-                ? IconButton(
-              key: const ValueKey('stopButton'),
-              icon: Icon(
-                Icons.stop,
-                color: _isDarkTheme
-                    ? Colors.white
-                    : Colors.black, // Changed from red to white
-                size: 24,
+      child: isModelSelected
+          ? (isModelLoaded
+          ? ConstrainedBox(
+        constraints: const BoxConstraints(
+          maxHeight: 150, // Approximately 6 lines height (24*6=144)
+        ),
+        child: Container(
+          key: _inputFieldKey, // Assign the key here
+          child: TextField(
+            cursorColor: isDarkTheme ? Colors.white : Colors.black,
+            focusNode: _textFieldFocusNode, // Assign FocusNode here
+            controller: _controller,
+            maxLength: 2000,
+            minLines: 1, // Minimum 1 line
+            maxLines: 6, // Maximum 6 lines
+            keyboardType: TextInputType.multiline, // Multi-line keyboard
+            textInputAction: TextInputAction.newline, // Support adding new lines
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: isDarkTheme
+                  ? const Color(0xFF161616)
+                  : Colors.grey[300], // Slightly darker background
+              counterText: '',
+              hintText: localizations.messageHint,
+              hintStyle: TextStyle(
+                  color: isDarkTheme
+                      ? Colors.grey[500]
+                      : Colors.grey[600]),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(15), // Softer edges
+                borderSide: BorderSide.none,
               ),
-              onPressed: _stopResponse,
-            )
-                : _isSendButtonVisible
-                ? IconButton(
-              key: const ValueKey('sendButton'),
-              icon: Icon(
-                Icons.arrow_upward,
-                color: _isDarkTheme
-                    ? Colors.white
-                    : Colors.black, // Adjusted
-                size: 22,
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(15), // Softer edges
+                borderSide: BorderSide.none,
               ),
-              onPressed:
-              _isSendButtonVisible ? _sendMessage : null,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(
-                minWidth: 24,
-                minHeight: 24,
+              focusedBorder: OutlineInputBorder(
+                borderSide: BorderSide(
+                    color:
+                    isDarkTheme ? Colors.white : Colors.black),
+                borderRadius:
+                BorderRadius.circular(15), // Softer edges
               ),
-            )
-                : const SizedBox(
-              key: ValueKey('empty'),
+              contentPadding: const EdgeInsets.symmetric(
+                  vertical: 16.0, horizontal: 16.0),
+              suffixIcon: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                transitionBuilder:
+                    (Widget child, Animation<double> animation) {
+                  return ScaleTransition(
+                      scale: animation, child: child);
+                },
+                child: isWaitingForResponse
+                    ? IconButton(
+                  key: const ValueKey('stopButton'),
+                  icon: Icon(
+                    Icons.stop,
+                    color: isDarkTheme
+                        ? Colors.white
+                        : Colors.black, // Adjusted for theme
+                    size: 24,
+                  ),
+                  onPressed: _stopResponse,
+                )
+                    : _isSendButtonVisible
+                    ? IconButton(
+                  key: const ValueKey('sendButton'),
+                  icon: Icon(
+                    Icons.arrow_upward,
+                    color: _isSendButtonEnabled
+                        ? (isDarkTheme
+                        ? Colors.white
+                        : Colors.black)
+                        : (isDarkTheme
+                        ? Colors.grey
+                        : Colors.grey[400]), // Adjusted
+                    size: 22,
+                  ),
+                  onPressed:
+                  _isSendButtonEnabled ? _sendMessage : null,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 24,
+                    minHeight: 24,
+                  ),
+                )
+                    : const SizedBox(
+                  key: ValueKey('empty'),
+                ),
+              ),
             ),
+            style: TextStyle(
+                color: isDarkTheme ? Colors.white : Colors.black),
+            onChanged: _onTextChanged,
+            onSubmitted: (text) {
+              if (_isSendButtonEnabled) _sendMessage();
+            },
+            enabled: true, // Allow composing message even when waiting
           ),
         ),
-        style: TextStyle(
-            color: _isDarkTheme ? Colors.white : Colors.black),
-        onChanged: _onTextChanged,
-        onSubmitted: (text) {
-          if (!isWaitingForResponse) _sendMessage();
-        },
-        enabled: true, // Allow composing message even when waiting
       )
           : Padding(
         padding: const EdgeInsets.all(16.0),
         child: Text(
           localizations.modelLoading,
           style: TextStyle(
-              color: _isDarkTheme ? Colors.grey : Colors.black54),
+              color:
+              isDarkTheme ? Colors.white70 : Colors.black54),
         ),
-      ),
+      ))
+          : const SizedBox
+          .shrink(), // Show nothing when no model is selected
     );
+  }
+
+  // Getter to determine if send button should be enabled
+  bool get _isSendButtonEnabled {
+    if (!_isSendButtonVisible) return false;
+    if (isWaitingForResponse) return false;
+    if (isServerSideModel(modelTitle) && !hasInternetConnection) return false;
+    if (!isStorageSufficient) return false; // **Check for Storage Sufficiency**
+    return true;
   }
 
   @override
   void dispose() {
     _controller.dispose(); // Release input controller
     responseTimer?.cancel(); // Cancel response timer
+    _scrollController.removeListener(_scrollListener); // Remove scroll listener
     _scrollController.dispose(); // Release scroll controller
     _modelAnimationController.dispose(); // Release animation controller
     _warningAnimationController.dispose();
+    llamaChannel.setMethodCallHandler(null); // Remove method call handler
+    _internetSubscription.cancel(); // Cancel internet connection listener
+    _textFieldFocusNode.dispose(); // Dispose FocusNode to free resources
     super.dispose();
   }
 }
 
-// Updated AIMessageTile Widget
 class AIMessageTile extends StatefulWidget {
   final String text;
   final String imagePath;
   final bool isDarkTheme;
+  final bool shouldFadeOut;
+  final VoidCallback? onFadeOutComplete;
 
-  const AIMessageTile(
-      {Key? key,
-        required this.text,
-        required this.imagePath,
-        required this.isDarkTheme})
-      : super(key: key);
+  const AIMessageTile({
+    Key? key,
+    required this.text,
+    required this.imagePath,
+    required this.isDarkTheme,
+    required this.shouldFadeOut,
+    this.onFadeOutComplete,
+  }) : super(key: key);
 
   @override
   _AIMessageTileState createState() => _AIMessageTileState();
 }
 
 class _AIMessageTileState extends State<AIMessageTile>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _animation;
+    with TickerProviderStateMixin {
+  late AnimationController _fadeController;
+  late Animation<double> _fadeAnimation;
+  bool _isFadingOut = false;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 500), // Fade-in duration
+    _fadeController = AnimationController(
+      duration:
+      const Duration(milliseconds: 500), // Fade-in and fade-out duration
       vsync: this,
     );
-    _animation = CurvedAnimation(parent: _controller, curve: Curves.easeIn);
-    _controller.forward(); // Start animation
+    _fadeAnimation =
+        Tween<double>(begin: 0.0, end: 1.0).animate(_fadeController);
+
+    // Start fade-in animation
+    _fadeController.forward();
+
+    // Fade-out animation completion callback
+    _fadeController.addStatusListener((status) {
+      if (status == AnimationStatus.dismissed && _isFadingOut) {
+        if (widget.onFadeOutComplete != null) {
+          widget.onFadeOutComplete!();
+        }
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(AIMessageTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.shouldFadeOut && !_isFadingOut) {
+      _isFadingOut = true;
+      // Reverse the animation for fade-out
+      _fadeController.reverse();
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose(); // Dispose animation controller
+    _fadeController.dispose();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    String imagePath = widget.imagePath;
+  // Function to parse text and identify markdown and LaTeX expressions
+  List<InlineSpan> _parseText(String text, bool isDarkTheme) {
+    List<InlineSpan> spans = [];
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0), // More padding
-      child: GestureDetector(
-        onLongPressStart: (details) {
-          _showMessageOptions(context, details.globalPosition, widget.text);
-        },
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              FadeTransition(
-                opacity: _animation,
-                child: imagePath.isNotEmpty
-                    ? Padding(
-                  padding: const EdgeInsets.only(left: 12.0),
-                  child: ClipRRect(
-                    borderRadius:
-                    BorderRadius.circular(15.0), // Soften edges
-                    child: Image.asset(
-                      imagePath,
-                      width: 30, // Smaller size
-                      height: 30,
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                )
-                    : Container(
-                  width: 30,
-                  height: 30,
-                  decoration: BoxDecoration(
-                    color: widget.isDarkTheme
-                        ? Colors.grey[700]
-                        : Colors.grey[300],
-                    borderRadius: BorderRadius.circular(15.0),
-                  ),
-                  child: Icon(
-                    Icons.person,
-                    color: widget.isDarkTheme
-                        ? Colors.white
-                        : Colors.black,
-                    size: 16,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16.0),
-              Expanded(
-                child: MarkdownBody(
-                  data: widget.text,
-                  styleSheet: MarkdownStyleSheet(
-                    p: TextStyle(
-                      color:
-                      widget.isDarkTheme ? Colors.white : Colors.black,
-                      fontSize: 16,
-                    ),
-                    code: TextStyle(
-                      color: widget.isDarkTheme
-                          ? Colors.orange
-                          : Colors.orange[800],
-                      backgroundColor: widget.isDarkTheme
-                          ? Colors.black54
-                          : Colors.grey[300],
-                    ),
-                    blockquote: TextStyle(
-                      color: widget.isDarkTheme
-                          ? Colors.white70
-                          : Colors.black87,
-                      fontStyle: FontStyle.italic,
-                    ),
-                    strong: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                    ),
-                    em: const TextStyle(
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+    // Regex patterns to identify various markdown and LaTeX expressions
+    final latexPattern =
+        r'(\\\[.*?\\\]|\\\(.*?\\\)|\$\$.*?\$\$|\$.*?\$|\\begin\{.*?\}.*?\\end\{.*?\})';
+    final codeBlockPattern = r'(```[\s\S]*?```|`[^`]+`)';
+    final markdownPattern =
+        r'(\*\*\*.*?\*\*\*|___.*?___|\*\*.*?\*\*|__.*?__|\*.*?\*|_.*?_|~~.*?~~)';
+    final combinedPattern =
+        '($latexPattern|$codeBlockPattern|$markdownPattern)';
+
+    RegExp regex = RegExp(combinedPattern, multiLine: true);
+    Iterable<RegExpMatch> matches = regex.allMatches(text);
+
+    int currentIndex = 0;
+
+    for (var match in matches) {
+      if (match.start > currentIndex) {
+        // Add normal text before the matched expression
+        spans.add(TextSpan(
+          text: text.substring(currentIndex, match.start),
+          style: TextStyle(
+            color: isDarkTheme ? Colors.white : Colors.black,
+            fontSize: 16,
           ),
+        ));
+      }
+
+      String matchText = match.group(0)!;
+
+      InlineSpan span;
+
+      if (RegExp(latexPattern, multiLine: true).hasMatch(matchText)) {
+        // LaTeX expression
+        String latex = matchText;
+
+        // Remove \begin{...} and \end{...} if present
+        latex = latex.replaceAllMapped(
+            RegExp(r'\\begin\{.*?\}'), (m) => '');
+        latex = latex.replaceAllMapped(
+            RegExp(r'\\end\{.*?\}'), (m) => '');
+
+        // Remove surrounding delimiters
+        if ((latex.startsWith('\$\$') && latex.endsWith('\$\$')) ||
+            (latex.startsWith('\\[') && latex.endsWith('\\]'))) {
+          // Block LaTeX
+          latex = latex.substring(2, latex.length - 2);
+        } else if ((latex.startsWith('\$') && latex.endsWith('\$')) ||
+            (latex.startsWith('\\(') && latex.endsWith('\\)'))) {
+          // Inline LaTeX
+          latex = latex.substring(1, latex.length - 1);
+        }
+
+        // Render LaTeX
+        span = WidgetSpan(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4.0),
+            child: Math.tex(
+              latex,
+              textStyle: TextStyle(
+                color: isDarkTheme ? Colors.white : Colors.black,
+                fontSize: 16,
+              ),
+            ),
+          ),
+        );
+      } else if (matchText.startsWith('```') && matchText.endsWith('```')) {
+        // Code block
+        String content = matchText.substring(3, matchText.length - 3);
+        span = TextSpan(
+          text: content,
+          style: TextStyle(
+            color: isDarkTheme ? Colors.orange : Colors.brown,
+            fontSize: 16,
+            fontFamily: 'monospace',
+            backgroundColor:
+            isDarkTheme ? Colors.grey[800] : Colors.grey[300],
+          ),
+        );
+      } else if (matchText.startsWith('***') && matchText.endsWith('***')) {
+        // Bold Italic
+        String content = matchText.substring(3, matchText.length - 3);
+        span = TextSpan(
+          text: content,
+          style: TextStyle(
+            color: isDarkTheme ? Colors.white : Colors.black,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            fontStyle: FontStyle.italic,
+          ),
+        );
+      } else if (matchText.startsWith('___') && matchText.endsWith('___')) {
+        // Bold Italic
+        String content = matchText.substring(3, matchText.length - 3);
+        span = TextSpan(
+          text: content,
+          style: TextStyle(
+            color: isDarkTheme ? Colors.white : Colors.black,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            fontStyle: FontStyle.italic,
+          ),
+        );
+      } else if ((matchText.startsWith('**') && matchText.endsWith('**')) ||
+          (matchText.startsWith('__') && matchText.endsWith('__'))) {
+        // Bold
+        String content = matchText.substring(2, matchText.length - 2);
+        span = TextSpan(
+          text: content,
+          style: TextStyle(
+            color: isDarkTheme ? Colors.white : Colors.black,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        );
+      } else if ((matchText.startsWith('*') && matchText.endsWith('*')) ||
+          (matchText.startsWith('_') && matchText.endsWith('_'))) {
+        // Italic
+        String content = matchText.substring(1, matchText.length - 1);
+        span = TextSpan(
+          text: content,
+          style: TextStyle(
+            color: isDarkTheme ? Colors.white : Colors.black,
+            fontSize: 16,
+            fontStyle: FontStyle.italic,
+          ),
+        );
+      } else if (matchText.startsWith('~~') && matchText.endsWith('~~')) {
+        // Strikethrough
+        String content = matchText.substring(2, matchText.length - 2);
+        span = TextSpan(
+          text: content,
+          style: TextStyle(
+            color: isDarkTheme ? Colors.white : Colors.black,
+            fontSize: 16,
+            decoration: TextDecoration.lineThrough,
+          ),
+        );
+      } else if (matchText.startsWith('`') && matchText.endsWith('`')) {
+        // Inline code
+        String content = matchText.substring(1, matchText.length - 1);
+        span = TextSpan(
+          text: content,
+          style: TextStyle(
+            color: isDarkTheme ? Colors.orange : Colors.brown,
+            fontSize: 16,
+            fontFamily: 'monospace',
+            backgroundColor:
+            isDarkTheme ? Colors.grey[800] : Colors.grey[300],
+          ),
+        );
+      } else {
+        // Plain text
+        span = TextSpan(
+          text: matchText,
+          style: TextStyle(
+            color: isDarkTheme ? Colors.white : Colors.black,
+            fontSize: 16,
+          ),
+        );
+      }
+
+      spans.add(span);
+
+      currentIndex = match.end;
+    }
+
+    if (currentIndex < text.length) {
+      // Add any remaining normal text after the last match
+      spans.add(TextSpan(
+        text: text.substring(currentIndex),
+        style: TextStyle(
+          color: isDarkTheme ? Colors.white : Colors.black,
+          fontSize: 16,
         ),
-      ),
-    );
+      ));
+    }
+
+    return spans;
   }
 
-  // Show message options (Copy) with fade-in effect
-  void _showMessageOptions(
-      BuildContext context, Offset tapPosition, String messageText) async {
+  // Function to show message options like copy on long press
+  void _showMessageOptions(BuildContext context, Offset tapPosition,
+      String messageText) async {
     final localizations = AppLocalizations.of(context)!;
+    final isDarkTheme =
+        Provider.of<ThemeProvider>(context, listen: false).isDarkTheme;
     final screenWidth = MediaQuery.of(context).size.width;
-    const menuWidth = 150.0; // Menu width
+    const menuWidth = 150.0;
 
     // Adjust the position if there's not enough space on the right
     Offset adjustedPosition = tapPosition;
     if (tapPosition.dx + menuWidth > screenWidth) {
-      adjustedPosition = Offset(screenWidth - menuWidth - 16.0, tapPosition.dy);
+      adjustedPosition =
+          Offset(screenWidth - menuWidth - 16.0, tapPosition.dy);
     }
 
     await showMenu(
@@ -1613,27 +1955,101 @@ class _AIMessageTileState extends State<AIMessageTile>
           child: Row(
             children: [
               Icon(Icons.copy,
-                  color: widget.isDarkTheme ? Colors.white : Colors.black),
+                  color: isDarkTheme ? Colors.white : Colors.black),
               const SizedBox(width: 10),
               Text(
                 localizations.copy,
-                style: TextStyle(
-                    color:
-                    widget.isDarkTheme ? Colors.white : Colors.black),
+                style:
+                TextStyle(color: isDarkTheme ? Colors.white : Colors.black),
               ),
             ],
           ),
         ),
       ],
       elevation: 8.0,
-      color: widget.isDarkTheme ? const Color(0xFF202020) : Colors.grey[200],
+      color: isDarkTheme ? const Color(0xFF202020) : Colors.grey[200],
     ).then((value) {
       if (value == 'copy') {
         Clipboard.setData(ClipboardData(text: messageText));
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(localizations.messageCopied)),
-        );
       }
     });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final localizations = AppLocalizations.of(context)!;
+
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: GestureDetector(
+        onLongPressStart: (details) {
+          _showMessageOptions(context, details.globalPosition, widget.text);
+        },
+        child: Padding(
+          padding:
+          const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Model's Image
+              widget.imagePath.isNotEmpty
+                  ? ClipRRect(
+                borderRadius: BorderRadius.circular(15.0),
+                child: Image.asset(
+                  widget.imagePath,
+                  width: 30,
+                  height: 30,
+                  fit: BoxFit.cover,
+                ),
+              )
+                  : Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: widget.isDarkTheme
+                      ? Colors.grey[700]
+                      : Colors.grey[300],
+                  borderRadius: BorderRadius.circular(15.0),
+                ),
+                child: Icon(
+                  Icons.person,
+                  color:
+                  widget.isDarkTheme ? Colors.white : Colors.black,
+                  size: 16,
+                ),
+              ),
+              const SizedBox(width: 16.0),
+              // Message Content
+              Expanded(
+                child: widget.text == localizations.thinking
+                    ? Shimmer.fromColors(
+                  baseColor:
+                  widget.isDarkTheme ? Colors.white : Colors.black,
+                  highlightColor: widget.isDarkTheme
+                      ? Colors.grey[400]!
+                      : Colors.grey[300]!,
+                  child: Text(
+                    localizations.thinking,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: widget.isDarkTheme
+                          ? Colors.white
+                          : Colors.black,
+                    ),
+                  ),
+                )
+                    : RichText(
+                  text: TextSpan(
+                    children:
+                    _parseText(widget.text, widget.isDarkTheme),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

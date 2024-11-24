@@ -2,10 +2,14 @@ import 'dart:convert';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
 class ApiService {
   final String googleApiKey = dotenv.env['API_KEY'] ?? '';
   final String openRouterApiKey = dotenv.env['API_KEY_2'] ?? '';
+  final AppLocalizations localizations;
+
+  ApiService({required this.localizations});
 
   // Google Generative AI için fonksiyon
   Future<String> getGeminiResponse(String userInput) async {
@@ -15,15 +19,15 @@ class ApiService {
       try {
         final content = [Content.text(userInput)];
         final response = await model.generateContent(content);
-        return response.text ?? 'Cevap alınamadı';
+        return response.text ?? localizations.errorResponseNotReceived;
       } catch (e) {
         if (attempt == 3) {
-          throw Exception('Google API isteği 3 kez başarısız oldu: $e');
+          throw Exception('${localizations.googleApiRequestFailed(3, e.toString())}');
         }
-        await Future.delayed(Duration(seconds: 2)); // Bir sonraki denemeden önce bekleme süresi
+        await Future.delayed(const Duration(seconds: 2)); // Bir sonraki denemeden önce bekleme süresi
       }
     }
-    return 'Cevap alınamadı';
+    return localizations.errorResponseNotReceived;
   }
 
   // OpenRouter için güncellenmiş fonksiyon
@@ -47,34 +51,34 @@ class ApiService {
         );
 
         final decodedBody = utf8.decode(response.bodyBytes);
-        print('OpenRouter Response Status: ${response.statusCode}');
-        print('OpenRouter Decoded Response Body: $decodedBody');
+        print(localizations.openRouterResponseStatus(response.statusCode));
+        print(localizations.openRouterDecodedResponseBody(decodedBody));
 
         if (response.statusCode == 200) {
           var data = jsonDecode(decodedBody);
-          print('Decoded JSON: $data');
+          print(localizations.decodedJson(data.toString()));
 
           if (data != null && data['choices'] != null && data['choices'].isNotEmpty) {
             var message = data['choices'][0]['message'];
             if (message != null && message['content'] != null) {
               return message['content'];
             } else {
-              throw Exception('Yanıt yapısı beklenenden farklı: message veya content eksik');
+              throw Exception(localizations.responseStructureUnexpectedMessageContentMissing);
             }
           } else {
-            throw Exception('Yanıt yapısı beklenenden farklı: choices eksik veya boş');
+            throw Exception(localizations.responseStructureUnexpectedChoicesMissing);
           }
         } else {
-          throw Exception("OpenRouter API isteği başarısız oldu: ${response.statusCode} - $decodedBody");
+          throw Exception(localizations.openRouterApiRequestFailed(response.statusCode, decodedBody));
         }
       } catch (e) {
         if (attempt == 3) {
-          throw Exception('OpenRouter API isteği 3 kez başarısız oldu: $e');
+          throw Exception('${localizations.openRouterApiRequestFailedAfterAttempts(3, e.toString())}');
         }
-        await Future.delayed(Duration(seconds: 2)); // Bir sonraki denemeden önce bekleme süresi
+        await Future.delayed(const Duration(seconds: 2)); // Bir sonraki denemeden önce bekleme süresi
       }
     }
-    return 'Cevap alınamadı';
+    return localizations.errorResponseNotReceived;
   }
 
   // OpenRouter için Hermes 3 fonksiyonu
@@ -98,33 +102,33 @@ class ApiService {
         );
 
         final decodedBody = utf8.decode(response.bodyBytes);
-        print('OpenRouter Response Status: ${response.statusCode}');
-        print('OpenRouter Decoded Response Body: $decodedBody');
+        print(localizations.openRouterResponseStatus(response.statusCode));
+        print(localizations.openRouterDecodedResponseBody(decodedBody));
 
         if (response.statusCode == 200) {
           var data = jsonDecode(decodedBody);
-          print('Decoded JSON: $data');
+          print(localizations.decodedJson(data.toString()));
 
           if (data != null && data['choices'] != null && data['choices'].isNotEmpty) {
             var message = data['choices'][0]['message'];
             if (message != null && message['content'] != null) {
               return message['content'];
             } else {
-              throw Exception('Yanıt yapısı beklenenden farklı: message veya content eksik');
+              throw Exception(localizations.responseStructureUnexpectedMessageContentMissing);
             }
           } else {
-            throw Exception('Yanıt yapısı beklenenden farklı: choices eksik veya boş');
+            throw Exception(localizations.responseStructureUnexpectedChoicesMissing);
           }
         } else {
-          throw Exception("OpenRouter API isteği başarısız oldu: ${response.statusCode} - $decodedBody");
+          throw Exception(localizations.openRouterApiRequestFailed(response.statusCode, decodedBody));
         }
       } catch (e) {
         if (attempt == 3) {
-          throw Exception('OpenRouter API isteği 3 kez başarısız oldu: $e');
+          throw Exception('${localizations.openRouterApiRequestFailedAfterAttempts(3, e.toString())}');
         }
-        await Future.delayed(Duration(seconds: 2)); // Bir sonraki denemeden önce bekleme süresi
+        await Future.delayed(const Duration(seconds: 2)); // Bir sonraki denemeden önce bekleme süresi
       }
     }
-    return 'Cevap alınamadı';
+    return localizations.errorResponseNotReceived;
   }
 }

@@ -15,33 +15,35 @@ import 'locale_provider.dart';
 import 'login.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'notifications.dart';
 import 'theme.dart'; // ThemeProvider'ı import ettik
 
 final GlobalKey<MainScreenState> mainScreenKey = GlobalKey<MainScreenState>();
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> requestNotificationPermission() async {
-  // Check the current status of notification permission
+  // Bildirim izin durumunu kontrol et
   var status = await Permission.notification.status;
 
   if (!status.isGranted) {
-    // If not granted, request permission
+    // İzin verilmemişse, izin iste
     status = await Permission.notification.request();
 
     if (status.isGranted) {
-      print('Notification permission granted');
+      print('Bildirim izni verildi');
     } else {
-      print('Notification permission denied');
-      // Decide what to do if the user denies permission
+      print('Bildirim izni reddedildi');
+      // Kullanıcı izni reddederse ne yapılacağına karar ver
     }
   } else {
-    print('Notification permission already granted');
+    print('Bildirim izni zaten verildi');
   }
 }
 
-Future<void> main() async {
+void main() async {
   await dotenv.load(fileName: ".env");
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(); // Initialize Firebase
+  await Firebase.initializeApp(); // Firebase'i başlat
   await requestNotificationPermission();
   await FlutterDownloader.initialize();
   final fileDownloadHelper = FileDownloadHelper();
@@ -50,7 +52,7 @@ Future<void> main() async {
   final prefs = await SharedPreferences.getInstance();
   bool? isDarkTheme = prefs.getBool('isDarkTheme');
   if (isDarkTheme == null) {
-    // No preference stored, get device's brightness
+    // Hiçbir tercih depolanmamışsa, cihazın parlaklık durumunu al
     Brightness brightness = WidgetsBinding.instance.window.platformBrightness;
     isDarkTheme = brightness == Brightness.dark;
   }
@@ -64,14 +66,16 @@ Future<void> main() async {
         ChangeNotifierProvider<LocaleProvider>(
           create: (_) => LocaleProvider(),
         ),
+        // NotificationService burada kaldırıldı
       ],
-      child: const ChatApp(),
+      child: ChatApp(navigatorKey: navigatorKey), // navigatorKey'i iletin
     ),
   );
 }
 
 class ChatApp extends StatelessWidget {
-  const ChatApp({super.key});
+  const ChatApp({super.key, required this.navigatorKey});
+  final GlobalKey<NavigatorState> navigatorKey; // navigatorKey tanımlaması
 
   @override
   Widget build(BuildContext context) {
@@ -79,13 +83,20 @@ class ChatApp extends StatelessWidget {
     final themeProvider = Provider.of<ThemeProvider>(context);
 
     return MaterialApp(
-      theme: ThemeData.light(),
-      darkTheme: ThemeData.dark(),
+      navigatorKey: navigatorKey, // navigatorKey'i MaterialApp'a geçir
+      theme: ThemeData.light().copyWith(
+        primaryColor: Colors.black,
+        hintColor: Colors.black,
+      ),
+      darkTheme: ThemeData.dark().copyWith(
+        primaryColor: Colors.white,
+        hintColor: Colors.white,
+       ),
       themeMode: themeProvider.isDarkTheme ? ThemeMode.dark : ThemeMode.light,
       locale: localeProvider.locale,
       supportedLocales: const [
-        Locale('en'), // English
-        Locale('tr'), // Turkish
+        Locale('en'), // İngilizce
+        Locale('tr'), // Türkçe
       ],
       localizationsDelegates: const [
         AppLocalizations.delegate,
@@ -94,24 +105,28 @@ class ChatApp extends StatelessWidget {
         GlobalCupertinoLocalizations.delegate,
       ],
       localeResolutionCallback: (locale, supportedLocales) {
-        // If a locale is set in the provider, use it
-        if (localeProvider.locale != null) {
-          return localeProvider.locale;
-        }
-        // Use the device's locale if supported
+        // Sağlayıcıda bir locale ayarlanmışsa kullan
+        return localeProvider.locale;
+              // Cihazın locale'ini destekleniyorsa kullan
         if (locale != null &&
             supportedLocales.any((supportedLocale) =>
             supportedLocale.languageCode == locale.languageCode)) {
           return locale;
         }
-        return const Locale('en'); // Default to English
+        return const Locale('en'); // Varsayılan olarak İngilizce
       },
-      home: const AuthWrapper(), // Change home to AuthWrapper
+      builder: (context, child) {
+        return Provider<NotificationService>(
+          create: (_) => NotificationService(navigatorKey: navigatorKey),
+          child: child!,
+        );
+      },
+      home: const AuthWrapper(), // Home'u AuthWrapper olarak değiştir
     );
   }
 }
 
-/// AuthWrapper now always shows WarningScreen
+/// AuthWrapper artık her zaman WarningScreen gösteriyor
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({super.key});
 
@@ -122,7 +137,7 @@ class AuthWrapper extends StatelessWidget {
 }
 
 class WarningScreen extends StatefulWidget {
-  const WarningScreen({Key? key}) : super(key: key);
+  const WarningScreen({super.key});
 
   @override
   _WarningScreenState createState() => _WarningScreenState();
@@ -167,12 +182,12 @@ class _WarningScreenState extends State<WarningScreen>
     User? user = FirebaseAuth.instance.currentUser;
 
     if (rememberMe && user != null) {
-      // If "Remember Me" is true and user is authenticated, navigate to MainScreen
+      // "Remember Me" true ve kullanıcı doğrulanmışsa, MainScreen'e git
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (context) => MainScreen(key: mainScreenKey)),
       );
     } else {
-      // Else, navigate to LoginScreen
+      // Aksi halde, LoginScreen'e git
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (context) => const LoginScreen()),
       );
@@ -185,10 +200,10 @@ class _WarningScreenState extends State<WarningScreen>
     final buttonWidth = screenWidth * 0.8;
 
     final appLocalizations = AppLocalizations.of(context)!;
-    final _isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
+    final isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
 
     return Scaffold(
-      backgroundColor: _isDarkTheme
+      backgroundColor: isDarkTheme
           ? const Color(0xFF090909)
           : const Color(0xFFFFFFFF),
       body: FadeTransition(
@@ -201,13 +216,13 @@ class _WarningScreenState extends State<WarningScreen>
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // Expanded content
+                // Expanded içerik
                 Expanded(
                   child: SingleChildScrollView(
                     child: Column(
                       children: [
                         const SizedBox(height: 16),
-                        // Warning title
+                        // Uyarı başlığı
                         Text(
                           appLocalizations.warningTitle,
                           style: TextStyle(
@@ -220,12 +235,12 @@ class _WarningScreenState extends State<WarningScreen>
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 16),
-                        // Warning message
+                        // Uyarı mesajı
                         Text(
                           appLocalizations.warningMessage,
                           style: TextStyle(
                             fontFamily: 'OpenSans',
-                            color: _isDarkTheme
+                            color: isDarkTheme
                                 ? Colors.grey[400]
                                 : Colors.grey[700],
                             fontSize: 14,
@@ -233,12 +248,12 @@ class _WarningScreenState extends State<WarningScreen>
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 20),
-                        // Email row
+                        // Email satırı
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(Icons.email,
-                                color: _isDarkTheme
+                                color: isDarkTheme
                                     ? Colors.grey[400]
                                     : Colors.grey[700],
                                 size: 24),
@@ -247,7 +262,7 @@ class _WarningScreenState extends State<WarningScreen>
                               'vertexgames23@gmail.com',
                               style: TextStyle(
                                 fontFamily: 'OpenSans',
-                                color: _isDarkTheme
+                                color: isDarkTheme
                                     ? Colors.grey[400]
                                     : Colors.grey[700],
                                 fontSize: 14,
@@ -260,7 +275,7 @@ class _WarningScreenState extends State<WarningScreen>
                     ),
                   ),
                 ),
-                // "Understood" button
+                // "Anladım" butonu
                 SizedBox(
                   width: buttonWidth,
                   child: ElevatedButton(
@@ -269,7 +284,7 @@ class _WarningScreenState extends State<WarningScreen>
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor:
-                      _isDarkTheme ? Colors.white : Colors.black,
+                      isDarkTheme ? Colors.white : Colors.black,
                       padding: const EdgeInsets.symmetric(
                           vertical: 12, horizontal: 0),
                       shape: RoundedRectangleBorder(
@@ -282,7 +297,7 @@ class _WarningScreenState extends State<WarningScreen>
                         fontFamily: 'OpenSans',
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
-                        color: _isDarkTheme ? Colors.black : Colors.white,
+                        color: isDarkTheme ? Colors.black : Colors.white,
                       ),
                     ),
                   ),
@@ -308,7 +323,7 @@ class MainScreenState extends State<MainScreen>
     with SingleTickerProviderStateMixin {
   int _selectedIndex = 0;
 
-  // Use GlobalKey to access ChatScreenState and MenuScreenState
+  // ChatScreenState ve MenuScreenState'e erişmek için GlobalKey kullan
   final GlobalKey<ChatScreenState> chatScreenKey =
   GlobalKey<ChatScreenState>();
   final GlobalKey<MenuScreenState> menuScreenKey =
@@ -340,19 +355,19 @@ class MainScreenState extends State<MainScreen>
     _animationController.forward();
   }
 
-  // Method to switch to ChatScreen and load a conversation
+  // ChatScreen'e geçiş yap ve bir konuşmayı yükle
   void openConversation(ConversationData conversationData) {
-    _animateScreenTransition(0); // Always animate transition to ChatScreen
+    _animateScreenTransition(0); // Her zaman ChatScreen'e geçiş yap
     chatScreenKey.currentState?.loadConversation(conversationData);
   }
 
-  // Method to start a new conversation
+  // Yeni bir konuşma başlat
   void startNewConversation() {
-    _animateScreenTransition(0); // Always animate transition to ChatScreen
+    _animateScreenTransition(0); // Her zaman ChatScreen'e geçiş yap
     chatScreenKey.currentState?.resetConversation();
   }
 
-  // Make the onItemTapped method public
+  // onItemTapped metodunu public yap
   void onItemTapped(int index) {
     _animateScreenTransition(index);
   }
@@ -368,28 +383,28 @@ class MainScreenState extends State<MainScreen>
 
   Widget _buildIconButton(IconData icon, int index) {
     bool isSelected = _selectedIndex == index;
-    final _isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
+    final isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       height: isSelected ? 26 : 20,
       child: Icon(
         icon,
         color: isSelected
-            ? (_isDarkTheme ? Colors.white : Colors.black)
-            : (_isDarkTheme ? Colors.grey : Colors.grey[600]),
+            ? (isDarkTheme ? Colors.white : Colors.black)
+            : (isDarkTheme ? Colors.grey : Colors.grey[600]),
       ),
     );
   }
 
   @override
   void dispose() {
-    _animationController.dispose(); // Dispose the animation controller
+    _animationController.dispose(); // Animasyon kontrolcüsünü temizle
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final _isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
+    final isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
     return GestureDetector(
       onTap: () {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -403,27 +418,33 @@ class MainScreenState extends State<MainScreen>
           ),
         ),
         bottomNavigationBar: BottomAppBar(
-          color: _isDarkTheme ? const Color(0xFF090909) : Colors.white,
+          color: isDarkTheme ? const Color(0xFF090909) : Colors.white,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
               IconButton(
                 icon: _buildIconButton(Icons.menu, 2),
-                onPressed: () {
+                onPressed: _selectedIndex == 2
+                    ? null // Disable if already selected
+                    : () {
                   onItemTapped(2);
                   ScaffoldMessenger.of(context).hideCurrentSnackBar();
                 },
               ),
               IconButton(
                 icon: _buildIconButton(Icons.chat_bubble, 0),
-                onPressed: () {
+                onPressed: _selectedIndex == 0
+                    ? null // Disable if already selected
+                    : () {
                   onItemTapped(0);
                   ScaffoldMessenger.of(context).hideCurrentSnackBar();
                 },
               ),
               IconButton(
                 icon: _buildIconButton(Icons.ac_unit, 1),
-                onPressed: () {
+                onPressed: _selectedIndex == 1
+                    ? null // Disable if already selected
+                    : () {
                   onItemTapped(1);
                   ScaffoldMessenger.of(context).hideCurrentSnackBar();
                 },

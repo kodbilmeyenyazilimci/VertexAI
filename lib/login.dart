@@ -7,9 +7,11 @@ import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart'; // Added
 import 'package:email_validator/email_validator.dart'; // Added for email validation
 import 'dart:async'; // Import for Timer
+import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart'; // EKLENDİ
 
 import 'main.dart';
 import 'theme.dart'; // ThemeProvider'ı import ettik
+import 'notifications.dart'; // NotificationService importu
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -39,30 +41,32 @@ class _LoginScreenState extends State<LoginScreen>
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false; // Yeni durum değişkeni
 
-  bool _showComingSoon = false; // For "Coming Soon" message
+  // final bool _showComingSoon = false; // For "Coming Soon" message (Unused, can be removed)
 
-  late AnimationController _animationController;
+  late AnimationController _mainAnimationController;
   late Animation<double> _animation;
 
-  // Added for "Coming Soon" animation
+  // AnimationController for "Coming Soon" message
+  late AnimationController _comingSoonAnimationController;
   late Animation<Offset> _slideAnimation;
   late Animation<double> _fadeAnimation;
-
+  late NotificationService _notificationService;
   @override
   void initState() {
     super.initState();
     _loadUserEmail();
-
-    _animationController = AnimationController(
+    _notificationService = Provider.of<NotificationService>(context, listen: false);
+    // Main animation controller
+    _mainAnimationController = AnimationController(
       duration: const Duration(milliseconds: 300),
       vsync: this,
     );
 
-    _animation =
-        CurvedAnimation(parent: _animationController, curve: Curves.easeInOut);
+    _animation = CurvedAnimation(
+        parent: _mainAnimationController, curve: Curves.easeInOut);
 
-    // Initialize the AnimationController for "Coming Soon" message
-    _animationController = AnimationController(
+    // Coming Soon animation controller
+    _comingSoonAnimationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
     );
@@ -73,18 +77,18 @@ class _LoginScreenState extends State<LoginScreen>
       end: const Offset(0, 0),
     ).animate(
       CurvedAnimation(
-        parent: _animationController,
+        parent: _comingSoonAnimationController,
         curve: Curves.easeInOut,
       ),
     );
 
     // Define the fade animation
     _fadeAnimation = Tween<double>(
-      begin: 0.0, // Fully transparent
-      end: 1.0,   // Fully opaque
+      begin: 0.0, // Başlangıçta tamamen şeffaf
+      end: 1.0,   // Sonunda tamamen opak
     ).animate(
       CurvedAnimation(
-        parent: _animationController,
+        parent: _comingSoonAnimationController,
         curve: Curves.easeIn,
       ),
     );
@@ -113,12 +117,14 @@ class _LoginScreenState extends State<LoginScreen>
     }
   }
 
+  // Kullanıcı adının benzersizliğini kontrol etmek için 'users' koleksiyonunu sorgulayın
   Future<bool> _isUsernameAvailable(String username) async {
     final result = await FirebaseFirestore.instance
-        .collection('usernames')
-        .doc(username)
+        .collection('users')
+        .where('username', isEqualTo: username)
+        .limit(1)
         .get();
-    return !result.exists;
+    return result.docs.isEmpty;
   }
 
   void _switchAuthMode() {
@@ -127,15 +133,30 @@ class _LoginScreenState extends State<LoginScreen>
       _authMode == AuthMode.login ? AuthMode.register : AuthMode.login;
       _errorMessage = ''; // Hata mesajını sıfırla
       if (_authMode == AuthMode.register) {
-        _animationController.forward();
+        _mainAnimationController.forward();
       } else {
-        _animationController.reverse();
+        _mainAnimationController.reverse();
       }
     });
   }
 
   Future<void> _submit() async {
     final appLocalizations = AppLocalizations.of(context)!;
+
+    bool hasConnection = await InternetConnection().hasInternetAccess;
+    if (!hasConnection) {
+      _notificationService.showCustomNotification(
+          message: appLocalizations.noInternetConnection,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+          beginOffset: const Offset(0, 1.0),
+          endOffset: const Offset(0, 0.4),
+          duration: const Duration(seconds: 2),
+          width: 250.0
+      );
+      return;
+    }
+
     FormState? form = _authMode == AuthMode.login
         ? _loginFormKey.currentState
         : _registerFormKey.currentState;
@@ -162,7 +183,6 @@ class _LoginScreenState extends State<LoginScreen>
         userCredential = await _auth.signInWithEmailAndPassword(
             email: _email, password: _password);
       } else {
-        // Kullanıcı adı mevcut mu kontrol et
         bool isAvailable = await _isUsernameAvailable(_username);
         if (!isAvailable) {
           setState(() {
@@ -176,28 +196,29 @@ class _LoginScreenState extends State<LoginScreen>
         userCredential = await _auth.createUserWithEmailAndPassword(
             email: _email, password: _password);
 
-        // Firestore'a kullanıcı bilgilerini ekle
+        // Kullanıcının kimliğinin doğrulanmış olduğunu kontrol et
+        if (_auth.currentUser == null) {
+          setState(() {
+            _errorMessage = 'Kimlik doğrulaması başarısız oldu. Lütfen tekrar deneyin.';
+            _isLoading = false;
+          });
+          return;
+        }
+
+        // Firestore'a kullanıcı verilerini ekleyin
         await FirebaseFirestore.instance
             .collection('users')
             .doc(userCredential.user!.uid)
             .set({
           'username': _username,
           'email': _email,
-          'hasVertexPlus': false, // Varsayılan olarak false
+          'hasVertexPlus': false,
           'createdAt': FieldValue.serverTimestamp(),
         });
-
-        // Usernames koleksiyonuna ekleme
-        await FirebaseFirestore.instance
-            .collection('usernames')
-            .doc(_username)
-            .set({
-          'userId': userCredential.user!.uid,
-        });
       }
+
       await _saveUserEmail();
 
-      // Updated navigation code to remove previous routes
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (context) => MainScreen(key: mainScreenKey)),
             (Route<dynamic> route) => false,
@@ -237,26 +258,28 @@ class _LoginScreenState extends State<LoginScreen>
     });
   }
 
-  // Method to show "Coming Soon" message
+  // Method to show "Coming Soon" message using NotificationService
   void _showComingSoonMessage() {
-    setState(() {
-      _showComingSoon = true;
-    });
-    _animationController.forward();
-
-    // Hide the message after 2 seconds
-    Timer(const Duration(seconds: 2), () {
-      _animationController.reverse().then((value) {
-        setState(() {
-          _showComingSoon = false;
-        });
-      });
-    });
+    final notificationService = Provider.of<NotificationService>(context, listen: false);
+    final _isDarkTheme = Provider.of<ThemeProvider>(context, listen: false).isDarkTheme;
+    notificationService.showCustomNotification(
+      message: AppLocalizations.of(context)!.comingSoon,
+      backgroundColor: _isDarkTheme ? Colors.white : Colors.black,
+      textColor: _isDarkTheme ? Colors.black : Colors.white,
+      textStyle: TextStyle(
+        fontWeight: FontWeight.bold,
+        color: _isDarkTheme ? Colors.black : Colors.white,
+      ),
+      beginOffset: const Offset(0, 1.0),
+      endOffset: const Offset(0, 0.4),
+      duration: const Duration(seconds: 2),
+      width: 150.0,
+    );
   }
 
   Widget _buildAuthForm() {
     final appLocalizations = AppLocalizations.of(context)!;
-    final _isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
+    final isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 300),
       transitionBuilder: (Widget child, Animation<double> animation) {
@@ -290,7 +313,7 @@ class _LoginScreenState extends State<LoginScreen>
                     decoration: InputDecoration(
                       filled: true,
                       fillColor:
-                      _isDarkTheme ? const Color(0xFF1b1b1b) : Colors.grey[200],
+                      isDarkTheme ? const Color(0xFF1b1b1b) : Colors.grey[200],
                       labelText: appLocalizations.username,
                       labelStyle: TextStyle(
                           color: Theme.of(context).textTheme.bodySmall?.color),
@@ -299,7 +322,9 @@ class _LoginScreenState extends State<LoginScreen>
                       border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
                           borderSide: BorderSide.none),
+                      counterText: '', // Counter'ı gizlemek için
                     ),
+                    maxLength: 16, // Maksimum 16 karakter
                     validator: _authMode == AuthMode.register
                         ? (value) {
                       if (value == null || value.isEmpty) {
@@ -307,6 +332,9 @@ class _LoginScreenState extends State<LoginScreen>
                       }
                       if (value.length < 3) {
                         return 'Kullanıcı adı en az 3 karakter olmalı.';
+                      }
+                      if (value.length > 16) {
+                        return 'Kullanıcı adı en fazla 16 karakter olmalı.';
                       }
                       return null;
                     }
@@ -325,7 +353,7 @@ class _LoginScreenState extends State<LoginScreen>
               decoration: InputDecoration(
                 filled: true,
                 fillColor:
-                _isDarkTheme ? const Color(0xFF1b1b1b) : Colors.grey[200],
+                isDarkTheme ? const Color(0xFF1b1b1b) : Colors.grey[200],
                 labelText: appLocalizations.email,
                 labelStyle: TextStyle(
                     color: Theme.of(context).textTheme.bodySmall?.color),
@@ -334,11 +362,16 @@ class _LoginScreenState extends State<LoginScreen>
                 border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
                     borderSide: BorderSide.none),
+                counterText: '', // Counter'ı gizlemek için
               ),
               keyboardType: TextInputType.emailAddress,
+              maxLength: 42, // Maksimum 42 karakter
               validator: (value) {
                 if (value == null || value.isEmpty) {
                   return appLocalizations.invalidEmail;
+                }
+                if (value.length > 30) {
+                  return 'E-posta en fazla 30 karakter olmalı.';
                 }
                 if (!EmailValidator.validate(value.trim())) {
                   return appLocalizations.invalidEmail;
@@ -356,7 +389,7 @@ class _LoginScreenState extends State<LoginScreen>
               decoration: InputDecoration(
                 filled: true,
                 fillColor:
-                _isDarkTheme ? const Color(0xFF1b1b1b) : Colors.grey[200],
+                isDarkTheme ? const Color(0xFF1b1b1b) : Colors.grey[200],
                 labelText: appLocalizations.password,
                 labelStyle: TextStyle(
                     color: Theme.of(context).textTheme.bodySmall?.color),
@@ -376,11 +409,16 @@ class _LoginScreenState extends State<LoginScreen>
                 border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
                     borderSide: BorderSide.none),
+                counterText: '', // Counter'ı gizlemek için
               ),
               obscureText: !_isPasswordVisible,
+              maxLength: 64, // Maksimum 64 karakter (isteğe bağlı)
               validator: (value) {
                 if (value == null || value.isEmpty || value.length < 6) {
                   return appLocalizations.invalidPassword;
+                }
+                if (value.length > 64) {
+                  return 'Şifre en fazla 64 karakter olmalı.';
                 }
                 return null;
               },
@@ -399,7 +437,7 @@ class _LoginScreenState extends State<LoginScreen>
                     decoration: InputDecoration(
                       filled: true,
                       fillColor:
-                      _isDarkTheme ? const Color(0xFF1b1b1b) : Colors.grey[200],
+                      isDarkTheme ? const Color(0xFF1b1b1b) : Colors.grey[200],
                       labelText: appLocalizations.confirmPassword,
                       labelStyle: TextStyle(
                           color: Theme.of(context).textTheme.bodySmall?.color),
@@ -414,21 +452,27 @@ class _LoginScreenState extends State<LoginScreen>
                         ),
                         onPressed: () {
                           setState(() {
-                            _isConfirmPasswordVisible = !_isConfirmPasswordVisible;
+                            _isConfirmPasswordVisible =
+                            !_isConfirmPasswordVisible;
                           });
                         },
                       ),
                       border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
                           borderSide: BorderSide.none),
+                      counterText: '', // Counter'ı gizlemek için
                     ),
                     obscureText: !_isConfirmPasswordVisible,
+                    maxLength: 64, // Maksimum 64 karakter (isteğe bağlı)
                     validator: _authMode == AuthMode.register
                         ? (value) {
                       if (value == null ||
                           value.isEmpty ||
                           value.length < 6) {
                         return appLocalizations.invalidPassword;
+                      }
+                      if (value.length > 64) {
+                        return 'Şifre en fazla 64 karakter olmalı.';
                       }
                       return null;
                     }
@@ -452,8 +496,8 @@ class _LoginScreenState extends State<LoginScreen>
                           _rememberMe = value ?? false;
                         });
                       },
-                      checkColor: _isDarkTheme ? Colors.black : Colors.white,
-                      activeColor: _isDarkTheme ? Colors.white : Colors.black,
+                      checkColor: isDarkTheme ? Colors.black : Colors.white,
+                      activeColor: isDarkTheme ? Colors.white : Colors.black,
                     ),
                     Text(appLocalizations.rememberMe,
                         style: TextStyle(
@@ -470,7 +514,7 @@ class _LoginScreenState extends State<LoginScreen>
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: _isDarkTheme ? Colors.white : Colors.black,
+                    backgroundColor: isDarkTheme ? Colors.white : Colors.black,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10)),
@@ -482,7 +526,7 @@ class _LoginScreenState extends State<LoginScreen>
                         : appLocalizations.signUp,
                     style: TextStyle(
                         fontSize: 18,
-                        color: _isDarkTheme ? Colors.black : Colors.white),
+                        color: isDarkTheme ? Colors.black : Colors.white),
                   ),
                 ),
               ),
@@ -492,7 +536,7 @@ class _LoginScreenState extends State<LoginScreen>
               children: [
                 Expanded(
                     child: Divider(
-                        color: _isDarkTheme ? Colors.grey[700] : Colors.grey[400])),
+                        color: isDarkTheme ? Colors.grey[700] : Colors.grey[400])),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: Text(appLocalizations.or,
@@ -501,7 +545,7 @@ class _LoginScreenState extends State<LoginScreen>
                 ),
                 Expanded(
                     child: Divider(
-                        color: _isDarkTheme ? Colors.grey[700] : Colors.grey[400])),
+                        color: isDarkTheme ? Colors.grey[700] : Colors.grey[400])),
               ],
             ),
             const SizedBox(height: 16),
@@ -510,21 +554,21 @@ class _LoginScreenState extends State<LoginScreen>
               width: double.infinity,
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _isDarkTheme ? Colors.white : Colors.black,
+                  backgroundColor: isDarkTheme ? Colors.white : Colors.black,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10)),
                 ),
                 onPressed: () {
-                  // Show "Coming Soon" message
+                  // Show "Coming Soon" message using NotificationService
                   _showComingSoonMessage();
                 },
                 icon: Icon(Icons.g_mobiledata,
-                    color: _isDarkTheme ? Colors.black : Colors.white),
+                    color: isDarkTheme ? Colors.black : Colors.white),
                 label: Text(
                   appLocalizations.continueWithGoogle,
                   style: TextStyle(
-                      color: _isDarkTheme ? Colors.black : Colors.white,
+                      color: isDarkTheme ? Colors.black : Colors.white,
                       fontSize: 16),
                 ),
               ),
@@ -537,7 +581,7 @@ class _LoginScreenState extends State<LoginScreen>
                     ? appLocalizations.dontHaveAccount
                     : appLocalizations.alreadyHaveAccount,
                 style: TextStyle(
-                    fontSize: 16, color: _isDarkTheme ? Colors.blue : Colors.blue),
+                    fontSize: 16, color: isDarkTheme ? Colors.blue : Colors.blue),
               ),
             ),
             if (_errorMessage.isNotEmpty)
@@ -561,13 +605,14 @@ class _LoginScreenState extends State<LoginScreen>
 
   @override
   void dispose() {
-    _animationController.dispose(); // Dispose the AnimationController
+    _mainAnimationController.dispose(); // Dispose the main AnimationController
+    _comingSoonAnimationController.dispose(); // Dispose the Coming Soon AnimationController
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final _isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
+    final isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(
@@ -578,47 +623,6 @@ class _LoginScreenState extends State<LoginScreen>
               child: _buildAuthForm(),
             ),
           ),
-          // Overlay for the "Coming Soon" message
-          if (_showComingSoon)
-            Positioned(
-              bottom: MediaQuery.of(context).size.height * 0.032, // Positioned at the bottom
-              left: MediaQuery.of(context).size.width * 0.32,
-              right: MediaQuery.of(context).size.width * 0.32,
-              child: SlideTransition(
-                position: _slideAnimation,
-                child: FadeTransition(
-                  opacity: _fadeAnimation,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          vertical: 12.0, horizontal: 20.0),
-                      decoration: BoxDecoration(
-                        color: _isDarkTheme ? Colors.white : Colors.black,
-                        borderRadius: BorderRadius.circular(8.0),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black26,
-                            blurRadius: 8,
-                            offset: Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Text(
-                          AppLocalizations.of(context)!.comingSoon,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: _isDarkTheme ? Colors.black : Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
         ],
       ),
     );

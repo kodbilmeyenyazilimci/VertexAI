@@ -17,6 +17,7 @@ class ModelData {
         'ram': appLocalizations.modelTinyLlamaRam,
         'producer': appLocalizations.modelTinyLlamaProducer,
         'isServerSide': false,
+        'canHandleImage': false
       },
       {
         'title': appLocalizations.modelPhiTitle,
@@ -27,6 +28,7 @@ class ModelData {
         'ram': appLocalizations.modelPhiRam,
         'producer': appLocalizations.modelPhiProducer,
         'isServerSide': false,
+        'canHandleImage': false
       },
       {
         'title': appLocalizations.modelMistralTitle,
@@ -37,6 +39,7 @@ class ModelData {
         'ram': appLocalizations.modelMistralRam,
         'producer': appLocalizations.modelMistralProducer,
         'isServerSide': false,
+        'canHandleImage': false
       },
       {
         'title': appLocalizations.modelGemmaTitle,
@@ -47,6 +50,7 @@ class ModelData {
         'ram': appLocalizations.modelGemmaRam,
         'producer': appLocalizations.modelGemmaProducer,
         'isServerSide': false,
+        'canHandleImage': false
       },
       {
         'title': appLocalizations.modelGPTNeoXTitle,
@@ -57,6 +61,7 @@ class ModelData {
         'ram': appLocalizations.modelGPTNeoXRam,
         'producer': appLocalizations.modelGPTNeoXProducer,
         'isServerSide': false,
+        'canHandleImage': false
       },
       {
         'title': 'Gemini',
@@ -67,6 +72,7 @@ class ModelData {
         'ram': '16 GB RAM', // No RAM requirement
         'producer': 'Google',
         'isServerSide': true,
+        'canHandleImage': false
       },
       {
         'title': 'Llama3.2',
@@ -77,16 +83,18 @@ class ModelData {
         'ram': '32 GB RAM', // No RAM requirement
         'producer': 'Meta',
         'isServerSide': true,
+        'canHandleImage': false
       },
       {
         'title': 'Hermes',
-        'description': appLocalizations.modelLlamaDescription,
+        'description': appLocalizations.modelHermesDescription,
         'url': 'no', // No download URL for server-side models
         'size': '180 GB', // No size needed
         'image': 'assets/hermes.png',
         'ram': '64 GB RAM', // No RAM requirement
-        'producer': 'Meta',
+        'producer': 'Nous Research',
         'isServerSide': true,
+        'canHandleImage': true
       },
     ];
   }

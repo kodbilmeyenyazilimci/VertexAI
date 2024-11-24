@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_downloader/flutter_downloader.dart';
@@ -136,6 +137,9 @@ class FileDownloadHelper extends ChangeNotifier {
           onDownloadError: onDownloadError,
           onDownloadPaused: onDownloadPaused,
         );
+      } else {
+        // Eğer taskId null dönerse, indirme işlemi başlatılamamıştır.
+        onDownloadError('Download could not be started.');
       }
 
       return taskId;

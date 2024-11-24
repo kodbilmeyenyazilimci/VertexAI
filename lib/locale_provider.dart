@@ -5,7 +5,7 @@ import 'dart:ui' as ui;
 class LocaleProvider extends ChangeNotifier {
   Locale _locale;
 
-  LocaleProvider() : _locale = Locale('en') {
+  LocaleProvider() : _locale = const Locale('en') {
     _setInitialLocale();
   }
 
@@ -22,9 +22,9 @@ class LocaleProvider extends ChangeNotifier {
       // Kayıtlı bir dil yoksa cihaz dilini kullan
       Locale deviceLocale = ui.window.locale;
       if (deviceLocale.languageCode == 'tr') {
-        _locale = Locale('tr');
+        _locale = const Locale('tr');
       } else {
-        _locale = Locale('en');
+        _locale = const Locale('en');
       }
       // Cihaz dilini varsayılan olarak kaydet
       await _saveLocale(_locale);
@@ -46,7 +46,7 @@ class LocaleProvider extends ChangeNotifier {
   }
 
   Future<void> clearLocale() async {
-    _locale = Locale('en');
+    _locale = const Locale('en');
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('language_code');

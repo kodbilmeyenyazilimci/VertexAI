@@ -1,4 +1,5 @@
 // models.dart
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_downloader/flutter_downloader.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import 'model.dart';
+import 'notifications.dart';
 import 'theme.dart';
 import 'data.dart';
 import 'download.dart';
@@ -15,6 +17,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as path;
+import 'package:firebase_auth/firebase_auth.dart'; // Firebase Auth eklemesi
+import 'package:cloud_firestore/cloud_firestore.dart'; // Cloud Firestore eklemesi
+import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart'; // Internet Connection Checker eklemesi
 
 enum CompatibilityStatus {
   compatible,
@@ -60,6 +65,10 @@ class _ModelsScreenState extends State<ModelsScreen>
   List<Map<String, dynamic>> _myModels = [];
 
   late String _filesDirectoryPath;
+  int _globalButtonClickCount = 0;
+  bool _isGlobalButtonLocked = false;
+  Timer? _resetClickCountTimer;
+
 
   @override
   void initState() {
@@ -112,14 +121,16 @@ class _ModelsScreenState extends State<ModelsScreen>
   @override
   void dispose() {
     _rotationController.dispose();
+    _resetClickCountTimer?.cancel(); // Cancel any active timers
+    _rotationController.stop(); // Stop any ongoing animations
     super.dispose();
   }
 
   Future<void> _initializeDirectory() async {
-    // Use the application's documents directory
+    // Uygulamanın belgeler dizinini kullan
     Directory appDocDir = await getApplicationDocumentsDirectory();
     _filesDirectoryPath = appDocDir.path;
-    print("Files will be stored in: $_filesDirectoryPath");
+    print("Dosyalar $_filesDirectoryPath dizinine kaydedilecek.");
   }
 
   Future<void> _initializeMyModels() async {
@@ -141,7 +152,8 @@ class _ModelsScreenState extends State<ModelsScreen>
         return {
           'title': path.basenameWithoutExtension(fileName),
           'description': AppLocalizations.of(context)!.myModelDescription,
-          'size': '', // Calculate file size if necessary
+          'size':
+          '${(file.lengthSync() / 1024).toStringAsFixed(2)} KB', // Dosya boyutunu hesapla
           'image': 'assets/customai.png',
           'path': file.path,
         };
@@ -158,7 +170,7 @@ class _ModelsScreenState extends State<ModelsScreen>
         });
       }
     } catch (e) {
-      print('Error fetching system info: $e');
+      print('Sistem bilgisi alınırken hata oluştu: $e');
     }
   }
 
@@ -239,9 +251,59 @@ class _ModelsScreenState extends State<ModelsScreen>
 
   String _getFilePath(String title) {
     String sanitizedTitle =
-    title.replaceAll(' ', '_'); // Replace spaces with underscores
+    title.replaceAll(' ', '_'); // Boşlukları alt çizgi ile değiştir
     return path.join(_filesDirectoryPath, '$sanitizedTitle.gguf');
   }
+
+  // Kullanıcının Vertex Plus sahibi olup olmadığını kontrol eden metot
+  Future<bool> _userHasVertexPlus() async {
+    User? user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+    try {
+      DocumentSnapshot userDoc =
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      if (userDoc.exists) {
+        return userDoc.get('hasVertexPlus') ?? false;
+      }
+      return false;
+    } catch (e) {
+      print("hasVertexPlus kontrolü sırasında hata: $e");
+      return false;
+    }
+  }
+
+  // "+" butonuna basıldığında çalışacak metot
+  void _onAddButtonPressed() async {
+    // İlk olarak internet bağlantısını kontrol et
+    bool hasConnection = await InternetConnection().hasInternetAccess ;
+
+    if (!hasConnection) {
+      // İnternet bağlantısı yoksa 'İnternet Yok' bildirimini göster
+      final notificationService = Provider.of<NotificationService>(context, listen: false);
+      notificationService.showNotification(
+        message: AppLocalizations.of(context)!.noInternetConnection,
+        isSuccess: false,
+        bottomOffset: 80,
+      );
+      return; // İşlemi sonlandır
+    }
+
+    // İnternet bağlantısı varsa, kullanıcının Vertex Plus sahibi olup olmadığını kontrol et
+    bool hasVertexPlus = await _userHasVertexPlus();
+    if (hasVertexPlus) {
+      // Vertex Plus sahibi ise model yükleme dialog'unu göster
+      _showUploadModelDialog();
+    } else {
+      // Vertex Plus sahibi değilse 'Vertex Plus Satın Al' bildirimini göster
+      final notificationService = Provider.of<NotificationService>(context, listen: false);
+      notificationService.showNotification(
+        message: AppLocalizations.of(context)!.purchaseVertexPlusToUpload,
+        isSuccess: false,
+        bottomOffset: 80,
+      );
+    }
+  }
+
 
   Widget _buildModelTile(
       String title,
@@ -293,13 +355,15 @@ class _ModelsScreenState extends State<ModelsScreen>
                   duration: const Duration(seconds: 1),
                   padding: const EdgeInsets.all(16.0),
                   decoration: BoxDecoration(
-                    color: isDarkTheme ? Colors.grey[900] : Colors.grey[200],
+                    color: isDarkTheme
+                        ? Colors.grey[900]
+                        : Colors.grey[200],
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: isServerSide || isDownloaded
-                          ? isDarkTheme
+                          ? (isDarkTheme
                           ? Colors.white
-                          : Colors.black
+                          : Colors.black)
                           : Colors.transparent,
                       width: 2,
                     ),
@@ -391,7 +455,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                                 mainAxisSize: MainAxisSize.min,
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(
+                                  const Icon(
                                     Icons.chat_bubble_rounded,
                                     color: Colors.white,
                                     size: 16,
@@ -421,7 +485,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                                       isCustomModel: true, modelPath: modelPath),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor:
-                                    Colors.redAccent, // Red background
+                                    Colors.redAccent, // Kırmızı arka plan
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(8),
                                     ),
@@ -434,7 +498,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                                       mainAxisAlignment:
                                       MainAxisAlignment.center,
                                       children: [
-                                        Icon(
+                                        const Icon(
                                           Icons.delete,
                                           color: Colors.white,
                                           size: 16,
@@ -458,8 +522,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                                 child: ElevatedButton(
                                   onPressed: () => _startChatWithModel(
                                       title, isServerSide,
-                                      isCustomModel: true,
-                                      modelPath: modelPath),
+                                      isCustomModel: true, modelPath: modelPath),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: isDarkTheme
                                         ? Colors.blueAccent
@@ -476,7 +539,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                                       mainAxisAlignment:
                                       MainAxisAlignment.center,
                                       children: [
-                                        Icon(
+                                        const Icon(
                                           Icons.chat_bubble_rounded,
                                           color: Colors.white,
                                           size: 16,
@@ -498,11 +561,15 @@ class _ModelsScreenState extends State<ModelsScreen>
                             ],
                           ),
                         )
-                      else if (isDownloading)
-                          SizedBox(
+                      else
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 300),
+                          child: isDownloading
+                              ? SizedBox(
+                            key: const ValueKey('cancelButton'),
                             width: double.infinity,
                             child: ElevatedButton(
-                              onPressed: () => _cancelDownload(title),
+                              onPressed: () => _handleButtonPress(() => _cancelDownload(title)),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.redAccent,
                                 shape: RoundedRectangleBorder(
@@ -514,9 +581,10 @@ class _ModelsScreenState extends State<ModelsScreen>
                               child: FittedBox(
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
-                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  mainAxisAlignment:
+                                  MainAxisAlignment.center,
                                   children: [
-                                    Icon(
+                                    const Icon(
                                       Icons.cancel,
                                       color: Colors.white,
                                       size: 16,
@@ -536,196 +604,241 @@ class _ModelsScreenState extends State<ModelsScreen>
                               ),
                             ),
                           )
-                        else if (isPaused)
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton(
-                                onPressed: () => _resumeDownload(title),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: isDarkTheme
-                                      ? Colors.blueAccent
-                                      : Colors.blue,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 12, horizontal: 8),
+                              : isPaused
+                              ? SizedBox(
+                            key: const ValueKey('resumeButton'),
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: () => _resumeDownload(title),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: isDarkTheme
+                                    ? Colors.blueAccent
+                                    : Colors.blue,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius:
+                                  BorderRadius.circular(8),
                                 ),
-                                child: FittedBox(
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.play_arrow,
-                                        color: Colors.white,
-                                        size: 16,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        AppLocalizations.of(context)!.resume,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 12, horizontal: 8),
                               ),
-                            )
-                          else if (!isDownloaded)
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton(
-                                  onPressed: compatibilityStatus !=
-                                      CompatibilityStatus.compatible
-                                      ? null
-                                      : () => _downloadModel(url, title),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: compatibilityStatus !=
-                                        CompatibilityStatus.compatible
-                                        ? Colors.grey
-                                        : isDarkTheme
-                                        ? Colors.white
-                                        : Colors.black,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 12, horizontal: 8),
-                                  ),
-                                  child: FittedBox(
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.download,
-                                          color: compatibilityStatus !=
-                                              CompatibilityStatus.compatible
-                                              ? Colors.white
-                                              : isDarkTheme
-                                              ? Colors.black
-                                              : Colors.white,
-                                          size: 16,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          compatibilityStatus ==
-                                              CompatibilityStatus
-                                                  .insufficientRAM
-                                              ? AppLocalizations.of(context)!
-                                              .insufficientRAM
-                                              : compatibilityStatus ==
-                                              CompatibilityStatus
-                                                  .insufficientStorage
-                                              ? AppLocalizations.of(context)!
-                                              .insufficientStorage
-                                              : AppLocalizations.of(context)!
-                                              .download,
-                                          style: TextStyle(
-                                            color: compatibilityStatus !=
-                                                CompatibilityStatus.compatible
-                                                ? Colors.white
-                                                : isDarkTheme
-                                                ? Colors.black
-                                                : Colors.white,
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              )
-                            else
-                              SizedBox(
-                                width: double.infinity,
+                              child: FittedBox(
                                 child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment:
+                                  MainAxisAlignment.center,
                                   children: [
-                                    Expanded(
-                                      child: ElevatedButton(
-                                        onPressed: () => _removeModel(title),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor:
-                                          Colors.redAccent, // Red background
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(8),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                              vertical: 12),
-                                        ),
-                                        child: FittedBox(
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                            children: [
-                                              Icon(
-                                                Icons.delete,
-                                                color: Colors.white,
-                                                size: 16,
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Text(
-                                                AppLocalizations.of(context)!.remove,
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
+                                    const Icon(
+                                      Icons.play_arrow,
+                                      color: Colors.white,
+                                      size: 16,
                                     ),
                                     const SizedBox(width: 8),
-                                    Expanded(
-                                      child: ElevatedButton(
-                                        onPressed: () => _startChatWithModel(
-                                            title, isServerSide),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: isDarkTheme
-                                              ? Colors.blueAccent
-                                              : Colors.blue,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(8),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                              vertical: 12, horizontal: 8),
-                                        ),
-                                        child: FittedBox(
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                            children: [
-                                              Icon(
-                                                Icons.chat_bubble_rounded,
-                                                color: Colors.white,
-                                                size: 16,
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Text(
-                                                AppLocalizations.of(context)!.chat,
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
+                                    Text(
+                                      AppLocalizations.of(context)!
+                                          .resume,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
+                            ),
+                          )
+                              : !isDownloaded
+                              ? SizedBox(
+                            key: const ValueKey('downloadButton'),
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: compatibilityStatus !=
+                                  CompatibilityStatus
+                                      .compatible
+                                  ? null
+                                  : () => _handleButtonPress(() => _downloadModel(url, title)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor:
+                                compatibilityStatus !=
+                                    CompatibilityStatus
+                                        .compatible
+                                    ? Colors.grey
+                                    : isDarkTheme
+                                    ? Colors.white
+                                    : Colors.black,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius:
+                                  BorderRadius.circular(8),
+                                ),
+                                padding:
+                                const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                    horizontal: 8),
+                              ),
+                              child: FittedBox(
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment:
+                                  MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.download,
+                                      color: compatibilityStatus !=
+                                          CompatibilityStatus
+                                              .compatible
+                                          ? Colors.white
+                                          : isDarkTheme
+                                          ? Colors.black
+                                          : Colors.white,
+                                      size: 16,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      compatibilityStatus ==
+                                          CompatibilityStatus
+                                              .insufficientRAM
+                                          ? AppLocalizations.of(
+                                          context)!
+                                          .insufficientRAM
+                                          : compatibilityStatus ==
+                                          CompatibilityStatus
+                                              .insufficientStorage
+                                          ? AppLocalizations.of(
+                                          context)!
+                                          .insufficientStorage
+                                          : AppLocalizations.of(
+                                          context)!
+                                          .download,
+                                      style: TextStyle(
+                                        color: compatibilityStatus !=
+                                            CompatibilityStatus
+                                                .compatible
+                                            ? Colors.white
+                                            : isDarkTheme
+                                            ? Colors.black
+                                            : Colors.white,
+                                        fontSize: 14,
+                                        fontWeight:
+                                        FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          )
+                              : SizedBox(
+                            key: const ValueKey('actionButtons'),
+                            width: double.infinity,
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton(
+                                    onPressed: () =>
+                                        _removeModel(title),
+                                    style:
+                                    ElevatedButton.styleFrom(
+                                      backgroundColor:
+                                      Colors.redAccent, // Kırmızı arka plan
+                                      shape:
+                                      RoundedRectangleBorder(
+                                        borderRadius:
+                                        BorderRadius.circular(
+                                            8),
+                                      ),
+                                      padding: const EdgeInsets
+                                          .symmetric(
+                                          vertical: 12),
+                                    ),
+                                    child: FittedBox(
+                                      child: Row(
+                                        mainAxisSize:
+                                        MainAxisSize.min,
+                                        mainAxisAlignment:
+                                        MainAxisAlignment
+                                            .center,
+                                        children: [
+                                          const Icon(
+                                            Icons.delete,
+                                            color: Colors.white,
+                                            size: 16,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            AppLocalizations.of(
+                                                context)!
+                                                .remove,
+                                            style:
+                                            const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 14,
+                                              fontWeight:
+                                              FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: ElevatedButton(
+                                    onPressed: () =>
+                                        _startChatWithModel(
+                                            title, isServerSide),
+                                    style:
+                                    ElevatedButton.styleFrom(
+                                      backgroundColor: isDarkTheme
+                                          ? Colors.blueAccent
+                                          : Colors.blue,
+                                      shape:
+                                      RoundedRectangleBorder(
+                                        borderRadius:
+                                        BorderRadius.circular(
+                                            8),
+                                      ),
+                                      padding: const EdgeInsets
+                                          .symmetric(
+                                          vertical: 12,
+                                          horizontal: 8),
+                                    ),
+                                    child: FittedBox(
+                                      child: Row(
+                                        mainAxisSize:
+                                        MainAxisSize.min,
+                                        mainAxisAlignment:
+                                        MainAxisAlignment
+                                            .center,
+                                        children: [
+                                          const Icon(
+                                            Icons
+                                                .chat_bubble_rounded,
+                                            color: Colors.white,
+                                            size: 16,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            AppLocalizations.of(
+                                                context)!
+                                                .chat,
+                                            style:
+                                            const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 14,
+                                              fontWeight:
+                                              FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -793,6 +906,22 @@ class _ModelsScreenState extends State<ModelsScreen>
 
   void _startChatWithModel(String title, bool isServerSide,
       {bool isCustomModel = false, String? modelPath}) async {
+    if (isServerSide) {
+      // İnternet bağlantısını kontrol et
+      bool hasConnection = await InternetConnection().hasInternetAccess;
+      if (!hasConnection) {
+        // Bildirim göster
+        final notificationService =
+        Provider.of<NotificationService>(context, listen: false);
+        notificationService.showNotification(
+          message: AppLocalizations.of(context)!.noInternetConnection,
+          isSuccess: false,
+          bottomOffset: 80,
+        );
+        return;
+      }
+    }
+
     await _selectModel(title, isServerSide,
         isCustomModel: isCustomModel, modelPath: modelPath);
 
@@ -804,10 +933,20 @@ class _ModelsScreenState extends State<ModelsScreen>
       title: modelData['title'],
       description: modelData['description'],
       imagePath: modelData['image'],
-      size: modelData['size'],
-      ram: modelData['ram'] ?? '',
-      producer: modelData['producer'] ?? '',
-      path: isServerSide ? null : (isCustomModel ? modelPath : _getFilePath(title)),
+      size: isCustomModel
+          ? ''
+          : _models.firstWhere((model) => model['title'] == title)['size'],
+      ram: isCustomModel
+          ? ''
+          : _models.firstWhere((model) => model['title'] == title)['ram'],
+      producer: isCustomModel
+          ? ''
+          : _models.firstWhere((model) => model['title'] == title)['producer'],
+      path: isServerSide
+          ? null
+          : (isCustomModel
+          ? modelPath
+          : _getFilePath(title)),
       isServerSide: isServerSide,
     );
 
@@ -849,87 +988,171 @@ class _ModelsScreenState extends State<ModelsScreen>
             _downloadModel(url, title);
           },
           onRemovePressed: () async {
-            await _removeModel(title, isCustomModel: isCustomModel, modelPath: modelPath);
+            await _removeModel(title,
+                isCustomModel: isCustomModel, modelPath: modelPath);
           },
           onChatPressed: () {
-            _startChatWithModel(title, isServerSide, isCustomModel: isCustomModel, modelPath: modelPath);
+            _startChatWithModel(title, isServerSide,
+                isCustomModel: isCustomModel, modelPath: modelPath);
           },
+          onCancelPressed: () {
+            _cancelDownload(title);
+          }, // Added this line
         ),
       ),
     );
   }
 
-
   void _downloadModel(String? url, String title) async {
     if (url == null) return;
+      // Check for internet connectivity
+      bool hasConnection = await InternetConnection().hasInternetAccess;
+      if (!hasConnection) {
+        // Show notification if there's no internet connection
+        final notificationService =
+        Provider.of<NotificationService>(context, listen: false);
+        notificationService.showNotification(
+          message: AppLocalizations.of(context)!.noInternetConnection,
+          // Ensure this localization key exists
+          isSuccess: false,
+          bottomOffset: 80, // or an appropriate value
+        );
+        return;
+      }
 
-    final prefs = await SharedPreferences.getInstance();
-    prefs.setBool('is_downloading_$title', true);
+    if (!mounted) return;
 
-    if (mounted) {
-      setState(() {
-        _isDownloading[title] = true;
-        _isPaused[title] = false;
+      final prefs = await SharedPreferences.getInstance();
+
+      // Indirme işlemi başlamadan önce isDownloading durumunu değiştirmiyoruz.
+
+      final filePath = _getFilePath(title);
+
+      String? taskId = await FileDownloadHelper().downloadModel(
+        url: url,
+        filePath: filePath,
+        title: title,
+        onProgress: (fileName, progress) {
+          // İlerleme güncellemeleri
+        },
+        onDownloadCompleted: (path) async {
+          print("İndirme tamamlandı, dosya yolu: $path");
+
+          final prefs = await SharedPreferences.getInstance();
+          prefs.setBool('is_downloading_$title', false);
+          prefs.setBool('is_downloaded_$title', true);
+          prefs.remove('download_task_id_$title');
+
+          if (mounted) {
+            setState(() {
+              _isDownloading[title] = false;
+              _downloadStates[title] = true;
+              _isPaused[title] = false;
+            });
+            _initializeDownloadedModels();
+          }
+
+          mainScreenKey.currentState
+              ?.chatScreenKey.currentState
+              ?.reloadModels();
+        },
+        onDownloadError: (error) async {
+          print("İndirme hatası: $error");
+
+          // İndirme işlemi başlamadan hata oluşmuşsa, isDownloading durumunu değiştirmiyoruz
+          if (error.contains('Download could not be started')) {
+            // Bildirim göster
+            final notificationService =
+            Provider.of<NotificationService>(context, listen: false);
+            notificationService.showNotification(
+              message: AppLocalizations.of(context)!.noInternetConnection,
+              // Ensure this localization key exists
+              isSuccess: false,
+              bottomOffset: 80, // Uygun bir değer
+            );
+          } else {
+            if (mounted) {
+              setState(() {
+                _isDownloading[title] = false;
+                _isPaused[title] = false;
+              });
+              final prefs = await SharedPreferences.getInstance();
+              prefs.setBool('is_downloading_$title', false);
+            }
+
+            // Diğer hatalar için bildirim göstermiyoruz veya logluyoruz
+          }
+        },
+        onDownloadPaused: () {
+          if (mounted) {
+            setState(() {
+              _isDownloading[title] = false;
+              _isPaused[title] = true;
+            });
+          }
+        },
+      );
+
+      if (taskId != null) {
+        _downloadTaskIds[title] = taskId;
+        prefs.setString('download_task_id_$title', taskId);
+
+        // İndirme işlemi başarıyla başlatıldıktan sonra isDownloading durumunu güncelliyoruz
+        if (mounted) {
+          setState(() {
+            _isDownloading[title] = true;
+            _isPaused[title] = false;
+          });
+        }
+
+        prefs.setBool('is_downloading_$title', true);
+      }
+  }
+
+  void _handleButtonPress(VoidCallback action) {
+    if (_isGlobalButtonLocked) {
+      // If buttons are locked, show notification and return
+      final notificationService = Provider.of<NotificationService>(context, listen: false);
+      notificationService.showNotification(
+        message: AppLocalizations.of(context)!.pleaseWaitBeforeTryingAgain,
+        isSuccess: false,
+        bottomOffset: 80,
+        width: 350,
+        fontSize: 12,
+      );
+      return;
+    }
+
+    // Perform the action immediately
+    action();
+
+    // Increment the click count
+    _globalButtonClickCount++;
+
+    if (_globalButtonClickCount == 1) {
+      // Start a timer to reset the click count after 4 seconds
+      _resetClickCountTimer = Timer(Duration(seconds: 4), () {
+        setState(() {
+          _globalButtonClickCount = 0;
+        });
       });
     }
 
-    final filePath = _getFilePath(title);
+    if (_globalButtonClickCount >= 4) {
+      // Lock the buttons for 5 seconds
+      setState(() {
+        _isGlobalButtonLocked = true;
+        _globalButtonClickCount = 0;
+      });
 
-    String? taskId = await FileDownloadHelper().downloadModel(
-      url: url,
-      filePath: filePath,
-      title: title,
-      onProgress: (fileName, progress) {
-        // Handle progress updates here if needed
-      },
-      onDownloadCompleted: (path) async {
-        print("Download completed, file path: $path");
+      _resetClickCountTimer?.cancel();
 
-        final prefs = await SharedPreferences.getInstance();
-        prefs.setBool('is_downloading_$title', false);
-        prefs.setBool('is_downloaded_$title', true);
-        prefs.remove('download_task_id_$title');
-
-        if (mounted) {
-          setState(() {
-            _isDownloading[title] = false;
-            _downloadStates[title] = true;
-            _isPaused[title] = false;
-          });
-          _initializeDownloadedModels();
-        }
-
-        mainScreenKey.currentState
-            ?.chatScreenKey.currentState
-            ?.reloadModels();
-      },
-      onDownloadError: (error) async {
-        print("Download error: $error");
-
-        if (mounted) {
-          setState(() {
-            _isDownloading[title] = false;
-            _isPaused[title] = false;
-          });
-          final prefs = await SharedPreferences.getInstance();
-          prefs.setBool('is_downloading_$title', false);
-        }
-
-        // Removed notification
-      },
-      onDownloadPaused: () {
-        if (mounted) {
-          setState(() {
-            _isDownloading[title] = false;
-            _isPaused[title] = true;
-          });
-        }
-      },
-    );
-
-    if (taskId != null) {
-      _downloadTaskIds[title] = taskId;
-      prefs.setString('download_task_id_$title', taskId);
+      // Unlock the buttons after 3 seconds
+      Timer(Duration(seconds: 3), () {
+        setState(() {
+          _isGlobalButtonLocked = false;
+        });
+      });
     }
   }
 
@@ -940,12 +1163,12 @@ class _ModelsScreenState extends State<ModelsScreen>
     final bool fileExists = await file.exists();
 
     if (fileExists) {
-      final prefs = await SharedPreferences.getInstance();
-      prefs.setBool('is_downloaded_$title', true);
+      // final prefs = await SharedPreferences.getInstance();
+      // prefs.setBool('is_downloaded_$title', true);
 
       if (mounted) {
         setState(() {
-          _downloadStates[title] = true;
+          // _downloadStates[title] = true;
 
           if (!downloadedModelsManager.downloadedModels
               .any((model) => model.name == title)) {
@@ -1040,6 +1263,8 @@ class _ModelsScreenState extends State<ModelsScreen>
             });
             prefs.setBool('is_downloading_$title', false);
             prefs.remove('download_task_id_$title');
+
+            // Bildirim gönderimi kaldırıldı
           } else {
             setState(() {
               _isDownloading[title] = false;
@@ -1115,7 +1340,7 @@ class _ModelsScreenState extends State<ModelsScreen>
     if (await file.exists()) {
       try {
         await file.delete();
-        print("File deleted: $filePath");
+        print("Dosya silindi: $filePath");
 
         if (!isCustomModel) {
           await prefs.setBool('is_downloaded_$title', false);
@@ -1148,13 +1373,13 @@ class _ModelsScreenState extends State<ModelsScreen>
           });
         }
 
-        // Removed notification
+        // Başarılı bildirim gönderimi kaldırıldı
       } catch (e) {
-        print("File deletion error: $e");
-        // Removed notification
+        print("Dosya silme hatası: $e");
+        // Hata bildirimi gönderimi kaldırıldı
       }
     } else {
-      print("File not found: $filePath");
+      print("Dosya bulunamadı: $filePath");
 
       if (!isCustomModel) {
         await prefs.setBool('is_downloaded_$title', false);
@@ -1172,7 +1397,7 @@ class _ModelsScreenState extends State<ModelsScreen>
         });
       }
 
-      // Removed notification
+      // Dosya bulunamadığında bildirim gönderimi kaldırıldı
     }
   }
 
@@ -1214,31 +1439,33 @@ class _ModelsScreenState extends State<ModelsScreen>
       producer: isCustomModel
           ? ''
           : _models.firstWhere((model) => model['title'] == title)['producer'],
-      path: filePath,
+      path: isServerSide
+          ? null
+          : (isCustomModel
+          ? modelPath
+          : _getFilePath(title)),
       isServerSide: isServerSide,
     );
   }
 
   void _cancelDownload(String title) async {
-    final prefs = await SharedPreferences.getInstance();
+      final prefs = await SharedPreferences.getInstance();
 
-    String? taskId = _downloadTaskIds[title];
-    if (taskId != null) {
-      await FileDownloadHelper().cancelDownload(taskId);
-      _downloadTaskIds.remove(title);
-      prefs.remove('download_task_id_$title');
-    }
+      String? taskId = _downloadTaskIds[title];
+      if (taskId != null) {
+        await FileDownloadHelper().cancelDownload(taskId);
+        _downloadTaskIds.remove(title);
+        prefs.remove('download_task_id_$title');
+      }
 
-    prefs.setBool('is_downloading_$title', false);
+      prefs.setBool('is_downloading_$title', false);
 
-    if (mounted) {
-      setState(() {
-        _isDownloading[title] = false;
-        _isPaused[title] = false;
-      });
-    }
-
-    // Removed notification
+      if (mounted) {
+        setState(() {
+          _isDownloading[title] = false;
+          _isPaused[title] = false;
+        });
+      }
   }
 
   void _resumeDownload(String title) async {
@@ -1254,7 +1481,7 @@ class _ModelsScreenState extends State<ModelsScreen>
           _isDownloading[title] = true;
         });
 
-        // Removed notification
+        // Bildirim gönderimi kaldırıldı
       }
     }
   }
@@ -1296,7 +1523,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                     size: 50,
                     color: isDarkTheme ? Colors.white : Colors.blue,
                   ),
-                  SizedBox(height: 16),
+                  const SizedBox(height: 16),
                   Text(
                     AppLocalizations.of(context)!.selectGGUFFile,
                     style: TextStyle(
@@ -1308,9 +1535,9 @@ class _ModelsScreenState extends State<ModelsScreen>
               ),
             ),
           ),
-          backgroundColor: isDarkTheme ? Color(0xFF0121212): Colors.white,
+          backgroundColor: isDarkTheme ? const Color(0xFF121212) : Colors.white,
           shape: RoundedRectangleBorder(
-            side: BorderSide(color: Colors.white, width: 1), // İnce beyaz çizgi
+            side: const BorderSide(color: Colors.white, width: 1), // İnce beyaz çizgi
             borderRadius: BorderRadius.circular(12.0), // Köşeleri biraz daha sivriltme
           ),
           actionsAlignment: MainAxisAlignment.center, // Butonu ortaya hizala
@@ -1333,24 +1560,25 @@ class _ModelsScreenState extends State<ModelsScreen>
 
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.any, // Allow all file types
+        type: FileType.custom, // Sadece GGUF dosyalarını seç
+        allowedExtensions: ['gguf'],
       );
 
       if (result != null && result.files.single.path != null) {
         String filePath = result.files.single.path!;
         String fileName = result.files.single.name;
 
-        // Check file extension
+        // Dosya uzantısını kontrol et
         if (path.extension(fileName).toLowerCase() != '.gguf') {
-          // Removed notification
+          // Uygun olmayan dosya uzantısı bildirimi eklenmedi
           return;
         }
 
-        String newFilePath = path.join(_filesDirectoryPath, fileName);
+        String newFilePath = _getFilePath(path.basenameWithoutExtension(fileName));
         File file = File(filePath);
 
         if (await File(newFilePath).exists()) {
-          // Removed notification
+          // Dosya zaten mevcut bildirimi kaldırıldı
           return;
         }
 
@@ -1360,20 +1588,26 @@ class _ModelsScreenState extends State<ModelsScreen>
           _myModels.add({
             'title': path.basenameWithoutExtension(fileName),
             'description': AppLocalizations.of(context)!.myModelDescription,
-            'size': '${(file.lengthSync() / 1024).toStringAsFixed(2)} KB', // Calculate file size
+            'size':
+            '${(file.lengthSync() / 1024).toStringAsFixed(2)} KB', // Dosya boyutunu hesapla
             'image': 'assets/customai.png',
             'path': newFilePath,
           });
         });
 
-        // Removed notification
+        // Sadece model başarıyla yüklendiğinde bildirim gönderiliyor
+        final notificationService =
+        Provider.of<NotificationService>(context, listen: false);
+        notificationService.showNotification(
+            message: 'Model başarıyla yüklendi.',
+            isSuccess: true,
+            bottomOffset: 80);
       } else {
-        // User canceled file selection
-        // Removed notification
+        // Kullanıcı dosya seçiminden vazgeçtiğinde bildirim gönderilmiyor
       }
     } catch (e) {
-      print("Error picking or copying file: $e");
-      // Removed notification
+      print("Dosya seçme veya kopyalama hatası: $e");
+      // Hata bildirimi gönderimi kaldırıldı
     }
   }
 
@@ -1381,7 +1615,7 @@ class _ModelsScreenState extends State<ModelsScreen>
   Widget build(BuildContext context) {
     final localizations = AppLocalizations.of(context)!;
 
-    final _isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
+    final isDarkTheme = Provider.of<ThemeProvider>(context).isDarkTheme;
 
     final serverSideModels =
     _models.where((model) => model['isServerSide'] ?? false).toList();
@@ -1390,25 +1624,26 @@ class _ModelsScreenState extends State<ModelsScreen>
 
     return Scaffold(
       backgroundColor:
-      _isDarkTheme ? const Color(0xFF090909) : Colors.white,
+      isDarkTheme ? const Color(0xFF090909) : Colors.white,
       appBar: AppBar(
+        scrolledUnderElevation: 0,
         title: Text(
           localizations.modelsTitle,
           style: TextStyle(
             fontFamily: 'Roboto',
-            color: _isDarkTheme ? Colors.white : Colors.black,
+            color: isDarkTheme ? Colors.white : Colors.black,
             fontSize: 24,
             fontWeight: FontWeight.bold,
           ),
         ),
         backgroundColor:
-        _isDarkTheme ? const Color(0xFF090909) : Colors.white,
+        isDarkTheme ? const Color(0xFF090909) : Colors.white,
         elevation: 0,
         actions: [
           IconButton(
             icon: Icon(Icons.add,
-                color: _isDarkTheme ? Colors.white : Colors.black),
-            onPressed: _showUploadModelDialog,
+                color: isDarkTheme ? Colors.white : Colors.black),
+            onPressed: _onAddButtonPressed, // Güncellenen kısım
           ),
         ],
       ),
@@ -1421,7 +1656,7 @@ class _ModelsScreenState extends State<ModelsScreen>
               children: [
                 if (localModels.isNotEmpty) ...[
                   _buildSectionHeader(
-                      localizations.localModels, _isDarkTheme),
+                      localizations.localModels, isDarkTheme),
                   ...localModels.map((model) {
                     return _buildModelTile(
                       model['title']!,
@@ -1432,13 +1667,13 @@ class _ModelsScreenState extends State<ModelsScreen>
                       model['ram'],
                       model['producer']!,
                       model['isServerSide'] ?? false,
-                      _isDarkTheme,
+                      isDarkTheme,
                     );
-                  }).toList(),
+                  }),
                 ],
                 if (serverSideModels.isNotEmpty) ...[
                   _buildSectionHeader(
-                      localizations.serverSideModels, _isDarkTheme),
+                      localizations.serverSideModels, isDarkTheme),
                   ...serverSideModels.map((model) {
                     return _buildModelTile(
                       model['title']!,
@@ -1449,12 +1684,12 @@ class _ModelsScreenState extends State<ModelsScreen>
                       model['ram'],
                       model['producer']!,
                       model['isServerSide'] ?? false,
-                      _isDarkTheme,
+                      isDarkTheme,
                     );
-                  }).toList(),
+                  }),
                 ],
                 if (_myModels.isNotEmpty) ...[
-                  _buildSectionHeader(localizations.myModels, _isDarkTheme),
+                  _buildSectionHeader(localizations.myModels, isDarkTheme),
                   ..._myModels.map((model) {
                     return _buildModelTile(
                       model['title'],
@@ -1465,11 +1700,11 @@ class _ModelsScreenState extends State<ModelsScreen>
                       '',
                       '',
                       false,
-                      _isDarkTheme,
+                      isDarkTheme,
                       isCustomModel: true,
                       modelPath: model['path'],
                     );
-                  }).toList(),
+                  }),
                 ],
                 Align(
                   alignment: Alignment.topCenter,
@@ -1482,7 +1717,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                           localizations.systemInfo,
                           style: TextStyle(
                             color:
-                            _isDarkTheme ? Colors.white : Colors.black,
+                            isDarkTheme ? Colors.white : Colors.black,
                             fontSize: 22,
                             height: 2,
                             fontWeight: FontWeight.bold,
@@ -1493,7 +1728,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                           height: 1,
                           width: 180,
                           color:
-                          _isDarkTheme ? Colors.white : Colors.black,
+                          isDarkTheme ? Colors.white : Colors.black,
                         ),
                       ],
                     ),
@@ -1503,7 +1738,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                   Container(
                     padding: const EdgeInsets.all(16.0),
                     decoration: BoxDecoration(
-                      color: _isDarkTheme
+                      color: isDarkTheme
                           ? const Color(0xFF101010)
                           : Colors.grey[200],
                       borderRadius: BorderRadius.circular(12),
@@ -1516,7 +1751,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                               (_systemInfo!.deviceMemory / 1024)
                                   .toStringAsFixed(1)),
                           style: TextStyle(
-                            color: _isDarkTheme
+                            color: isDarkTheme
                                 ? Colors.white
                                 : Colors.black,
                           ),
@@ -1526,7 +1761,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                               (_systemInfo!.totalStorage / 1024)
                                   .toStringAsFixed(1)),
                           style: TextStyle(
-                            color: _isDarkTheme
+                            color: isDarkTheme
                                 ? Colors.white
                                 : Colors.black,
                           ),
@@ -1536,7 +1771,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                               (_systemInfo!.freeStorage / 1024)
                                   .toStringAsFixed(1)),
                           style: TextStyle(
-                            color: _isDarkTheme
+                            color: isDarkTheme
                                 ? Colors.white
                                 : Colors.black,
                           ),
@@ -1574,7 +1809,7 @@ class BorderPainter extends CustomPainter {
         isDarkTheme ? Colors.white : Colors.black,
         Colors.transparent,
       ],
-      stops: [0.0, 0.2],
+      stops: const [0.0, 0.2],
       transform: GradientRotation((progress) * (pi / 180)),
     );
 
